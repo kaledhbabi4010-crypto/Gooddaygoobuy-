@@ -1,239 +1,112 @@
----
+name: KHALED CI
+
 on:
-  workflow_dispatch:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-engine: copilot
+jobs:
+  build:
+    runs-on: windows-latest
 
-safe-outputs:
-  create-pull-request:
-  add-comment:
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
----
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
-# KHALED — Autonomous Full Product Builder
+      - name: Validate project
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "KHALED-MASTER-PLAN.md")) {
+            throw "KHALED-MASTER-PLAN.md not found."
+          }
 
-You are the senior software engineering team responsible for implementing the repository.
+          $projects = Get-ChildItem -Path . -Recurse -Filter *.csproj |
+            Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' }
 
-SOURCE OF TRUTH:
-- KHALED-MASTER-PLAN.md
-- Actual repository files
-- Actual compiler output
-- Actual test output
-- Actual verification results
+          if ($projects.Count -eq 0) {
+            throw "No .csproj project exists. The repository contains the plan but no executable implementation."
+          }
 
-MISSION:
+          Write-Host "Found $($projects.Count) project(s)."
 
-Build the ACTUAL KHALED + REVO AI product described by KHALED-MASTER-PLAN.md.
+      - name: Restore
+        shell: pwsh
+        run: |
+          $projects = Get-ChildItem -Path . -Recurse -Filter *.csproj |
+            Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' }
 
-Do NOT create a demo.
-Do NOT create a toy Console application.
-Do NOT claim completion from generated files alone.
-Do NOT simulate tests.
-Do NOT fabricate Autodesk compatibility.
-Do NOT remove requirements merely to obtain a successful build.
+          foreach ($project in $projects) {
+            dotnet restore $project.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "Restore failed: $($project.FullName)"
+            }
+          }
 
-==================================================
-PHASE 1 — REPOSITORY AUDIT
-==================================================
+      - name: Build
+        shell: pwsh
+        run: |
+          $projects = Get-ChildItem -Path . -Recurse -Filter *.csproj |
+            Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' }
 
-Inspect the entire repository first.
+          foreach ($project in $projects) {
+            dotnet build $project.FullName --configuration Release --no-restore
+            if ($LASTEXITCODE -ne 0) {
+              throw "BUILD FAILED: $($project.FullName)"
+            }
+          }
 
-Determine:
-- current files
-- current source code
-- current workflows
-- current project structure
-- existing tests
-- existing build errors
-- missing implementation
-- duplicated or contradictory requirements
+      - name: Test
+        shell: pwsh
+        run: |
+          $tests = Get-ChildItem -Path . -Recurse -Filter *Tests.csproj |
+            Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' }
 
-Preserve useful existing work.
+          if ($tests.Count -eq 0) {
+            throw "No test project exists. Product cannot be declared complete."
+          }
 
-Never overwrite unrelated files.
+          foreach ($test in $tests) {
+            dotnet test $test.FullName --configuration Release --no-restore --no-build
+            if ($LASTEXITCODE -ne 0) {
+              throw "TEST FAILED: $($test.FullName)"
+            }
+          }
 
-==================================================
-PHASE 2 — IMPLEMENTATION
-==================================================
+      - name: Verification
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 
-Implement the architecture specified in KHALED-MASTER-PLAN.md.
+          Get-ChildItem -Path . -Recurse -File |
+            Where-Object {
+              $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\|\\artifacts\\'
+            } |
+            Select-Object FullName,Length |
+            Out-File artifacts/inventory.txt
 
-At minimum implement the real architecture for:
+          Get-ChildItem -Path . -Recurse -File -Include *.dll,*.exe |
+            Where-Object {
+              $_.FullName -notmatch '\\.git\\|\\obj\\|\\artifacts\\'
+            } |
+            ForEach-Object {
+              (Get-FileHash $_.FullName -Algorithm SHA256).Hash + "  " + $_.FullName
+            } |
+            Out-File artifacts/SHA256.txt
 
-KHALED:
-- install
-- verify
-- status
-- upgrade
-- repair
-- uninstall
-- discovery
-- planning
-- policy
-- risk
-- execution gate
-- execution
-- verification
-- evidence
-- recovery
-- rollback
-
-REVO AI:
-- Intent Engine
-- Context Engine
-- Planning Engine
-- Command Normalizer
-- Validation Engine
-- Policy Engine
-- Risk Engine
-- Execution Gate
-- Adapter Router
-- Verification Engine
-- Recovery Engine
-
-AI PROVIDERS:
-- provider abstraction
-- disabled/deterministic mode
-- local AI provider abstraction
-- optional external provider abstraction
-
-AUTODESK:
-- Revit adapter architecture
-- AutoCAD adapter architecture
-- version-specific compatibility layer
-- capability detection
-- graceful unsupported-version handling
-
-BROWSER:
-- browser abstraction
-- Playwright integration where required
-- semantic/accessibility-first interaction
-- no CAPTCHA/auth/security bypass
-
-SECURITY:
-- secret redaction
-- path allowlists
-- command allowlists
-- patch validation
-- safe execution
-- no credentials in repository
-
-==================================================
-PHASE 3 — REAL BUILD
-==================================================
-
-Use the actual compiler.
-
-Build the real project.
-
-Never replace failing code with fake placeholder success.
-
-If compilation fails:
-1. capture the exact error
-2. identify the responsible file
-3. diagnose the root cause
-4. make the smallest safe correction
-5. rebuild
-
-==================================================
-PHASE 4 — REAL TESTING
-==================================================
-
-Create meaningful automated tests for implemented functionality.
-
-Run:
-- unit tests
-- integration tests where possible
-- static validation
-- security validation
-- package validation
-- installer/deployment validation
-
-Never mark a test as passed unless it actually executed successfully.
-
-==================================================
-PHASE 5 — AUTONOMOUS REPAIR
-==================================================
-
-If build or tests fail:
-
-Analyze the actual logs.
-
-Maximum:
-5 repair attempts per failure class.
-
-Every repair must:
-- be based on actual evidence
-- modify only required files
-- preserve security
-- preserve requirements
-- never delete tests to hide failures
-- never weaken validation
-- rebuild
-- retest
-
-If still failing, stop and report the exact unresolved failure.
-
-==================================================
-PHASE 6 — VERIFICATION
-==================================================
-
-The product may be called COMPLETE only when:
-
-- source implementation exists
-- build succeeds
-- tests succeed
-- security checks succeed
-- packaging succeeds
-- verification succeeds
-- required artifacts exist
-- no mandatory requirement is silently omitted
-
-For Revit 2016–2027 and AutoCAD 2016–2027:
-
-DO NOT claim a version is supported unless its adapter can actually be built/tested or the repository contains concrete evidence supporting that claim.
-
-==================================================
-PHASE 7 — EVIDENCE
-==================================================
-
-Generate:
-
-artifacts/
-  build/
-  tests/
-  verification/
-  logs/
-  hashes/
-  release/
-
-Include:
-
-- build result
-- test result
-- compiler warnings/errors
-- verification result
-- artifact inventory
-- SHA256 hashes
-- repair history
-- unsupported capabilities
-- unresolved failures
-
-==================================================
-FINAL RULE
-==================================================
-
-Never output "COMPLETE" merely because the workflow finished.
-
-Output COMPLETE only when the actual acceptance criteria are proven by executable evidence.
-
-Otherwise output NOT READY with the exact reason.
-
-If implementation is incomplete, continue implementing rather than pretending that the project is finished.
-
-Create a pull request containing the actual implementation and evidence when the repository has meaningful changes.
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KHALED-verification
+          path: artifacts/
+          if-no-files-found: ignore

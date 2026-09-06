@@ -1,89 +1,32 @@
-استبدل محتوى .github/workflows/build.yml بالكامل بهذا النص، ثم Commit مباشرة:
+أنت الآن وكيل التنفيذ الفعلي للمستودع، وليس مجرد مدقق أو مولّد مثال.
 
-name: KHALED Autonomous Builder
+اقرأ KHALED-MASTER-PLAN.md كاملًا، ثم نفّذ المشروع الحقيقي بالكامل داخل المستودع.
 
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
+لا تكتفِ بإنشاء Bootstrap أو Console أو ملفات وهمية.
+لا تقل "تم" إلا بعد وجود الكود الحقيقي.
 
-permissions:
-  contents: write
-  pull-requests: write
+نفّذ بالترتيب:
+1. أنشئ كل بنية KHALED وREVO AI المطلوبة في الخطة.
+2. أنشئ جميع المشاريع والكود والاختبارات والملفات اللازمة.
+3. ابنِ المشروع فعليًا على Windows.
+4. شغّل الاختبارات الفعلية.
+5. عند أي خطأ، اقرأ الخطأ الحقيقي وأصلح السبب ثم أعد Build/Test.
+6. كرر الإصلاح حتى النجاح، دون حذف المتطلبات أو تعطيل الاختبارات.
+7. أنشئ ملفات Release وVerification وSHA256.
+8. افحص كل متطلبات KHALED-MASTER-PLAN.md مقابل التنفيذ.
+9. لا تدّعِ دعم Revit/AutoCAD لأي إصدار إلا إذا كان هناك دليل بناء/اختبار حقيقي.
+10. إذا كانت هناك قدرة لا يمكن تنفيذها أو اختبارها بسبب عدم توفر SDK/بيئة Autodesk، اذكرها صراحة ولا تستبدلها بمحاكاة.
 
-jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
+ممنوع:
+- Demo
+- Placeholder
+- Fake success
+- Simulated tests
+- تجاهل الأخطاء
+- حذف الاختبارات
+- الادعاء بأن المنتج كامل بدون دليل
 
-      - name: Validate workflow and repository
-        shell: pwsh
-        run: |
-          $ErrorActionPreference="Stop"
-          if (!(Test-Path "KHALED-MASTER-PLAN.md")) { throw "MASTER PLAN MISSING" }
-          Write-Host "KHALED MASTER PLAN FOUND"
+الشرط النهائي:
+لا تعتبر المهمة ناجحة إلا إذا كان الكود الحقيقي موجودًا، Build ناجحًا، Tests ناجحة، Verification ناجحًا، وجميع الملفات المطلوبة موجودة.
 
-      - name: Bootstrap real implementation
-        shell: pwsh
-        run: |
-          $ErrorActionPreference="Stop"
-
-          if (!(Get-ChildItem -Recurse -Filter *.csproj -ErrorAction SilentlyContinue)) {
-            New-Item -ItemType Directory -Force "src/KHALED" | Out-Null
-
-            @'
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-</Project>
-'@ | Set-Content "src/KHALED/KHALED.csproj"
-
-            @'
-using System;
-Console.WriteLine("KHALED implementation bootstrap initialized.");
-Console.WriteLine("MASTER PLAN: KHALED-MASTER-PLAN.md");
-'@ | Set-Content "src/KHALED/Program.cs"
-          }
-
-      - name: Restore
-        shell: pwsh
-        run: |
-          $ErrorActionPreference="Stop"
-          Get-ChildItem -Recurse -Filter *.csproj |
-            ForEach-Object { dotnet restore $_.FullName }
-
-      - name: Build
-        shell: pwsh
-        run: |
-          $ErrorActionPreference="Stop"
-          Get-ChildItem -Recurse -Filter *.csproj |
-            ForEach-Object {
-              dotnet build $_.FullName -c Release --no-restore
-            }
-
-      - name: Verify
-        shell: pwsh
-        run: |
-          $ErrorActionPreference="Stop"
-          New-Item -ItemType Directory -Force artifacts | Out-Null
-          Get-ChildItem -Recurse -Filter *.dll |
-            Where-Object {$_.FullName -notmatch '\\obj\\'} |
-            ForEach-Object {
-              (Get-FileHash $_.FullName -Algorithm SHA256).Hash
-            } | Set-Content artifacts/SHA256.txt
-
-      - name: Commit generated implementation
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src artifacts
-          if (!(git diff --cached --quiet)) {
-            git commit -m "KHALED: bootstrap implementation"
-            git push
-          }
+ابدأ الآن من حالة المستودع الحالية، ولا تطلب مني خطوات إضافية؛ نفّذ كل ما تستطيع فعليًا وسجّل أي عائق حقيقي بدل اختلاق النجاح.

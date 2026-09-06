@@ -1,19 +1,12 @@
-KHALED-MASTER-PLAN.md
+KHALED-MASTER-PLAN.md   ← المواصفات
         ↓
-build.yml حقيقي
+bootstrap.ps1           ← ينفذ إنشاء المشروع
         ↓
-إنشاء المشروع الفعلي
+KHALED-X.csproj         ← مشروع حقيقي
         ↓
-Build
+src/                    ← الكود الحقيقي
+tests/                  ← الاختبارات
         ↓
-Test
+build.yml               ← يشغل كل شيء
         ↓
-إذا ظهر خطأ → تشخيص
-        ↓
-إصلاح آمن
-        ↓
-Build + Test
-        ↓
-Verification
-        ↓
-EXE فقط إذا نجح فعليًا
+Build → Test → Verify

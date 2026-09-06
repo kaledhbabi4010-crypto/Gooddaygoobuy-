@@ -1,5 +1,19 @@
-Gooddaygoobuy-/
-├── KHALED-MASTER-PLAN.md
-└── .github/
-    └── workflows/
-        └── build.yml       ← ملف التنفيذ
+KHALED-MASTER-PLAN.md
+        ↓
+build.yml حقيقي
+        ↓
+إنشاء المشروع الفعلي
+        ↓
+Build
+        ↓
+Test
+        ↓
+إذا ظهر خطأ → تشخيص
+        ↓
+إصلاح آمن
+        ↓
+Build + Test
+        ↓
+Verification
+        ↓
+EXE فقط إذا نجح فعليًا

@@ -1,1213 +1,314 @@
----
-name: KHALED Local AI Factory
-description: Autonomous local AI software factory for real implementation, build, test, browser verification, security review, repair, evidence and GitHub PR workflows without GitHub Copilot or paid AI APIs.
-intent: Build and continuously repair the real KHALED project from KHALED-MASTER-PLAN.md using a self-hosted runner, Ollama, Qwen and an open-source coding agent. Never fabricate execution or verification results.
-on:
-  workflow_dispatch:
-  push:
-    paths:
-      - "KHALED-MASTER-PLAN.md"
-      - ".github/workflows/**"
-      - "src/**"
-      - "tests/**"
+name: KHALED CI Factory
 
-engine: opencode
+run-name: "KHALED • ${{ github.event_name }} • ${{ github.sha }}"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: read
-  issues: read
-  pull-requests: write
-
-tools:
-  github:
-    toolsets:
-      - repos
-      - issues
-      - pull_requests
-      - actions
-  edit:
-  web-search:
-  web-fetch:
-  playwright:
-  bash:
-    - "git *"
-    - "ollama *"
-    - "opencode *"
-    - "dotnet *"
-    - "npm *"
-    - "npx *"
-    - "python *"
-    - "pytest *"
-    - "pwsh *"
-    - "bash *"
-    - "sha256sum *"
-    - "find *"
-    - "grep *"
-    - "sed *"
-    - "cat *"
-    - "mkdir *"
-    - "cp *"
-    - "test *"
-
-network:
-  allowed:
-    - defaults
-    - github
-    - npm
-    - nuget
-    - pypi
-    - playwright
-
-safe-outputs:
-  create-pull-request:
-    max: 1
-    title-prefix: "[KHALED] "
-    labels:
-      - automated
-  add-comment:
-    max: 1
-  create-issue:
-    max: 1
-  noop:
----
-
-# KHALED LOCAL AI SOFTWARE FACTORY
-
-## PRIMARY OBJECTIVE
-
-Transform the existing repository into the REAL KHALED project described by:
-
-`KHALED-MASTER-PLAN.md`
-
-Do not create a demonstration project.
-
-Do not create fake implementations.
-
-Do not fabricate build results.
-
-Do not fabricate test results.
-
-Do not fabricate browser results.
-
-Do not fabricate compatibility.
-
-Do not claim successful execution unless actual execution evidence exists.
-
-The repository, compiler output, test output, browser output, security results and generated artifacts are the sources of truth.
-
----
-
-# 1. AI ENGINE
-
-Do NOT use:
-
-```yaml
-engine: copilot
-
-Do NOT depend on GitHub Copilot credits.
-
-Use the local AI stack:
-
-Self-Hosted Runner
-        ↓
-Ollama
-        ↓
-Qwen Coding Model
-        ↓
-OpenCode
-
-Preferred model:
-
-qwen3-coder:30b
-
-If the runner has insufficient resources, detect the available resources and select the strongest compatible Qwen coding model actually available through Ollama.
-
-Never claim that a model is available until:
-
-ollama list
-
-or an equivalent real command confirms it.
-
-Never download or select a model solely because documentation says it exists.
-
-
----
-
-2. LOCAL AI REQUIREMENT
-
-The AI model must operate locally through Ollama whenever the no-account/no-paid-AI configuration is used.
-
-The workflow must not require:
-
-OpenAI API
-Anthropic API
-Google API
-GitHub Copilot
-Paid AI account
-
-for the local inference path.
-
-If Ollama is unavailable:
-
-STATUS = BLOCKED
-
-Do not silently switch to a paid or external provider.
-
-
----
-
-3. SELF-HOSTED RUNNER
-
-The workflow requires a self-hosted runner capable of running:
-
-Git
-Ollama
-OpenCode
-Project build tools
-Project test tools
-Playwright
-Python
-Node.js
-.NET
-PowerShell
-Bash
-
-Only use tools actually installed on the runner.
-
-First inspect:
-
-uname -a
-git --version
-ollama --version
-opencode --version
-python --version
-node --version
-dotnet --version
-pwsh --version
-
-Missing tools must be recorded as blockers.
-
-
----
-
-4. FIRST ACTION — COMPLETE REPOSITORY AUDIT
-
-Before modifying anything:
-
-git status
-git log --oneline -20
-find . -maxdepth 5 -type f
-
-Then completely inspect:
-
-KHALED-MASTER-PLAN.md
-src/
-tests/
-.github/
-project files
-solution files
-package files
-Python files
-configuration files
-documentation
-existing evidence
-
-Read:
-
-KHALED-MASTER-PLAN.md
-
-completely.
-
-Do not assume previous instructions were executed.
-
-Do not assume previous generated files exist.
-
-Do not trust documentation when repository contents contradict it.
-
-
----
-
-5. CURRENT STATE DETECTION
-
-Determine the actual state of the repository.
-
-Classify:
-
-IMPLEMENTED
-PARTIALLY IMPLEMENTED
-MISSING
-BROKEN
-UNVERIFIED
-BLOCKED
-
-Determine:
-
-language
-framework
-build system
-test framework
-dependencies
-entry points
-configuration
-workflows
-artifacts
-integrations
-
-Never assume:
-
-.NET
-C#
-Python
-Node
-C++
-
-or any other technology.
-
-
----
-
-6. GITHUB ACTIONS AUDIT
-
-Inspect all workflows.
-
-For failed runs:
-
-1. obtain the actual failure;
-
-
-2. identify the workflow;
-
-
-3. identify the job;
-
-
-4. identify the failing command;
-
-
-5. identify the relevant file;
-
-
-6. identify the relevant line;
-
-
-7. classify the failure;
-
-
-8. determine the root cause.
-
-
-
-Failure classes:
-
-CONFIGURATION
-YAML
-SYNTAX
-DEPENDENCY
-ENVIRONMENT
-IMPLEMENTATION
-API
-BUILD
-TEST
-SECURITY
-BROWSER
-PERMISSION
-NETWORK
-AUTHENTICATION
-RESOURCE
-
-Never repeatedly repair a file as a workflow if it is not actually valid workflow syntax.
-
-
----
-
-7. ARCHITECT AGENT
-
-Create an internal implementation architecture from:
-
-KHALED-MASTER-PLAN.md
-
-Extract:
-
-requirements
-modules
-interfaces
-dependencies
-build targets
-test targets
-external systems
-unsupported environments
-risks
-acceptance criteria
-
-Resolve contradictions conservatively.
-
-Never silently remove a requirement.
-
-Create a task backlog.
-
-Break large requirements into independently testable tasks.
-
-
----
-
-8. RESEARCH AGENT
-
-When external technical information is required:
-
-1. search current information;
-
-
-2. prefer official documentation;
-
-
-3. prefer official GitHub repositories;
-
-
-4. prefer official SDK/API documentation;
-
-
-5. use authoritative technical sources;
-
-
-6. use community sources only when necessary.
-
-
-
-Verify:
-
-API existence
-package existence
-version compatibility
-CLI syntax
-SDK behavior
-Autodesk APIs
-browser behavior
-security requirements
-
-Never invent APIs.
-
-Never assume obsolete examples are still valid.
-
-Record important findings as evidence.
-
-
----
-
-9. IMPLEMENTATION AGENT
-
-Implement the REAL project incrementally.
-
-Rules:
-
-inspect before editing
-preserve valid work
-smallest safe change
-no speculative implementation
-no fake integrations
-no hard-coded secrets
-no credentials in source
-tests for important behavior
-clear interfaces
-
-After every meaningful component:
-
-BUILD
-↓
-TEST
-↓
-VERIFY
-
-
----
-
-10. SPECIALIZED AGENTS
-
-Use the following roles:
-
-ARCHITECT
-RESEARCHER
-CODER
-BUILDER
-TESTER
-DEBUGGER
-REPAIRER-A
-REPAIRER-B
-REPAIRER-C
-SECURITY
-BROWSER
-REVIEWER
-VERIFIER
-
-Roles may be implemented as logical agent phases when the execution framework does not support independent physical agents.
-
-Do not allow independent repair phases to overwrite one another blindly.
-
-Prefer:
-
-isolated change
-↓
-review
-↓
-controlled integration
-
-
----
-
-11. BUILD AGENT
-
-Detect the actual technology.
-
-Execute the real build command.
-
-Examples only when actually applicable:
-
-dotnet build
-npm run build
-python -m build
-pytest
-
-Do not execute commands merely because they appear in this document.
-
-Capture:
-
-command
-exit_code
-stdout
-stderr
-warnings
-errors
-artifact_paths
-timestamp
-commit
-
-Build is successful only when the actual command succeeds.
-
-
----
-
-12. TEST AGENT
-
-Use real tests.
-
-Test where applicable:
-
-unit
-integration
-contract
-regression
-security
-end-to-end
-
-Never create tests whose purpose is only to obtain a green build.
-
-Never weaken a failing test merely to make CI pass.
-
-Never delete a test solely because it fails.
-
-A test failure is evidence of a problem until proven otherwise.
-
-
----
-
-13. BROWSER AGENT
-
-Browser verification is mandatory whenever web interaction or UI verification is required.
-
-Use Playwright.
-
-Prefer semantic/accessibility snapshots before screenshots.
-
-Perform actual:
-
-open
-navigate
-click
-fill
-submit
-verify
-console inspection
-network inspection
-screenshot
-
-Browser execution must produce real evidence.
-
-Never bypass:
-
-CAPTCHA
-MFA
-authorization
-security controls
-access restrictions
-
-Never use credentials unless explicitly provided through an approved environment mechanism.
-
-Never put credentials in source code.
-
-
----
-
-14. DEBUGGING PIPELINE
-
-Every failure follows:
-
-CAPTURE ERROR
-↓
-CLASSIFY ERROR
-↓
-IDENTIFY ROOT CAUSE
-↓
-SELECT SPECIALIST
-↓
-CREATE SMALLEST SAFE PATCH
-↓
-BUILD
-↓
-TEST
-↓
-VERIFY
-
-Never hide errors.
-
-Never suppress failures merely to obtain a green status.
-
-
----
-
-15. REPAIR LOOP
-
-Maximum repair attempts per failure:
-
-5
-
-Attempt 1:
-
-minimal source repair
-
-Attempt 2:
-
-alternative technical repair
-
-Attempt 3:
-
-dependency/API repair
-
-Attempt 4:
-
-architectural repair
-
-Attempt 5:
-
-independent reviewer repair
-
-After five failed attempts:
-
-STOP
-STATUS = BLOCKED
-
-No infinite repair loops.
-
-
----
-
-16. SECURITY AGENT
-
-Inspect every generated or modified component for:
-
-secrets
-API keys
-credentials
-unsafe shell commands
-command injection
-path traversal
-arbitrary file writes
-unsafe downloads
-dependency vulnerabilities
-malicious repository content
-prompt injection
-unsafe generated patches
-excessive permissions
-credential exposure
-
-Reject unsafe changes.
-
-Never expose secrets in logs.
-
-Never copy secrets into evidence.
-
-
----
-
-17. KHALED ARCHITECTURE
-
-Preserve required architecture from:
-
-KHALED-MASTER-PLAN.md
-
-Where applicable:
-
-Intent Engine
-Context Engine
-Planning Engine
-Command Normalizer
-Validation Engine
-Policy Engine
-Risk Engine
-Execution Gate
-Adapter Router
-Verification Engine
-Recovery Engine
-
-Required execution order:
-
-AI
-↓
-Intent
-↓
-Context
-↓
-Planning
-↓
-Normalization
-↓
-Validation
-↓
-Policy
-↓
-Risk
-↓
-Execution Gate
-↓
-Adapter
-↓
-Execution
-↓
-Verification
-↓
-Recovery when required
-
-AI must never silently bypass:
-
-Validation
-Policy
-Risk
-Execution Gate
-Verification
-
-
----
-
-18. DETERMINISTIC-FIRST
-
-Use deterministic logic whenever possible.
-
-AI should assist with:
-
-reasoning
-planning
-code generation
-diagnosis
-research
-repair
-
-Deterministic code must control:
-
-validation
-permissions
-execution gates
-artifact verification
-security rules
-final status
-
-AI output is never itself proof of success.
-
-
----
-
-19. AI PROVIDER ABSTRACTION
-
-Keep the architecture AI-provider agnostic.
-
-The local default is:
-
-Ollama
-
-with:
-
-Qwen coding model
-
-The implementation must not hard-code assumptions that prevent future providers.
-
-Future providers may be added through an abstraction layer.
-
-Do not require external AI services when local mode is active.
-
-
----
-
-20. AUTODESK COMPATIBILITY
-
-If required by the master plan:
-
-Revit 2016–2027
-AutoCAD 2016–2027
-
-Never claim compatibility merely because code compiles.
-
-For each version record:
-
-COMPILE STATUS
-LOAD STATUS
-INTEGRATION STATUS
-VERIFICATION STATUS
-
-If the actual Autodesk environment is unavailable:
-
-UNVERIFIED
-
-Never mark it VERIFIED.
-
-Never simulate Autodesk execution.
-
-
----
-
-21. EVIDENCE DIRECTORY
-
-Create:
-
-evidence/
-
-with:
-
-build.json
-tests.json
-security.json
-browser.json
-repairs.json
-verification.json
-artifacts.json
-
-Each record must contain, when applicable:
-
-{
-  "timestamp": "...",
-  "commit": "...",
-  "command": "...",
-  "exit_code": 0,
-  "status": "PASS",
-  "summary": "...",
-  "artifact": "...",
-  "log": "..."
-}
-
-Only record results that actually occurred.
-
-
----
-
-22. ARTIFACT VERIFICATION
-
-For every generated artifact:
-
-exists
-format valid
-file size
-SHA256 where appropriate
-exact path
-source commit
-build result
-
-Do not call an artifact a release unless required verification passes.
-
-
----
-
-23. GIT SAFETY
-
-Before modification:
-
-git status
-
-Never destroy user work.
-
-Do not use:
-
-git reset --hard
-git clean -fd
-
-unless explicitly authorized and demonstrably safe.
-
-Prefer:
-
-new branch
-↓
-change
-↓
-build
-↓
-test
-↓
-verify
-↓
-commit
-↓
-push
-↓
-pull request
-
-
----
-
-24. PULL REQUEST
-
-When implementation is ready, create a Pull Request rather than directly modifying a protected branch.
-
-The PR must contain:
-
-summary
-changed files
-build evidence
-test evidence
-security evidence
-browser evidence
-compatibility evidence
-known limitations
-unresolved blockers
-verification status
-
-Never create a PR claiming success when verification failed.
-
-
----
-
-25. SELF-HEALING
-
-When an actual build/test failure occurs:
-
-GitHub Actions
-↓
-KHALED detects failure
-↓
-collect logs
-↓
-OpenCode
-↓
-Ollama
-↓
-Qwen
-↓
-root-cause analysis
-↓
-patch
-↓
-build
-↓
-test
-↓
-verification
-
-If successful:
-
-prepare evidence
-↓
-review
-↓
-PR
-
-If unsuccessful:
-
-repair
-
-up to five attempts.
-
-After five failed attempts:
-
-BLOCKED
-
-
----
-
-26. BROWSER AND EXTERNAL SYSTEM POLICY
-
-External systems must be accessed only when required.
-
-Never fabricate external execution.
-
-If an external system is unavailable:
-
-record blocker
-continue independently testable work
-mark external verification UNVERIFIED
-
-Do not turn an unavailable environment into a simulated success.
-
-
----
-
-27. RESOURCE MANAGEMENT
-
-Before selecting a large local model:
-
-detect RAM
-detect GPU
-detect VRAM
-detect disk
-detect CPU
-
-Choose the strongest model that the actual environment can reasonably run.
-
-Do not claim a model is running until actual Ollama execution confirms it.
-
-Do not assume that a larger model is automatically more accurate if it cannot execute reliably.
-
-
----
-
-28. CONTEXT MANAGEMENT
-
-For large repositories:
-
-repository map
-↓
-relevant files
-↓
-relevant history
-↓
-relevant failures
-↓
-relevant tests
-↓
-focused context
-
-Do not blindly load the entire repository into every request.
-
-Preserve enough context to prevent incorrect modifications.
-
-
----
-
-29. REVIEWER
-
-The independent Reviewer must challenge:
-
-Is the implementation real?
-Are tests meaningful?
-Are integrations real?
-Are browser results real?
-Are security controls present?
-Are compatibility claims proven?
-Were failures hidden?
-Does implementation follow the master plan?
-
-If evidence is insufficient:
-
-RETURN FOR REPAIR
-
-
----
-
-30. VERIFIER
-
-The Verifier independently inspects:
-
-BUILD
-TESTS
-SECURITY
-BROWSER
-ARTIFACTS
-COMPATIBILITY
-DOCUMENTATION
-
-Allowed final states:
-
-VERIFIED
-PARTIALLY VERIFIED
-UNVERIFIED
-BLOCKED
-
-Never change:
-
-UNVERIFIED
-
-to:
-
-VERIFIED
-
-without actual evidence.
-
-
----
-
-31. FINAL VERIFICATION
-
-The project may be called COMPLETE only when:
-
-real source code exists
-required build succeeds
-required tests succeed
-security review passes
-required browser tests pass
-artifacts exist
-artifacts are verified
-evidence exists
-independent review passes
-independent verification passes
-no critical unresolved blocker remains
-
-Otherwise:
-
-PARTIALLY VERIFIED
-
-or:
-
-BLOCKED
-
-
----
-
-32. FINAL REPORT
-
-Return only a concise machine-verifiable report:
-
-STATUS:
-BUILD:
-TESTS:
-SECURITY:
-BROWSER:
-ARTIFACTS:
-COMPATIBILITY:
-REPAIRS:
-VERIFICATION:
-UNRESOLVED BLOCKERS:
-NEXT ACTION:
-
-Never use:
-
-100% COMPLETE
-
-unless every required acceptance criterion has actual evidence.
-
-Never fabricate:
-
-build result
-test result
-browser result
-security result
-compatibility
-artifact
-execution
-
-
----
-
-33. FAILURE POLICY
-
-If any required dependency, SDK, operating system, Autodesk installation, browser environment, credential, external service, Ollama instance, model or runner is unavailable:
-
-1. record exact blocker
-2. explain why it prevents verification
-3. continue independently testable work
-4. create strongest automated verification possible
-5. mark affected capability UNVERIFIED or BLOCKED
-6. never fabricate completion
-
-
----
-
-34. FINAL OPERATING PRINCIPLE
-
-The objective is not:
-
-MAKE CI GREEN
-
-The objective is:
-
-BUILD THE REAL KHALED PROJECT CORRECTLY
-
-Priority:
-
-TRUTH
->
-CORRECTNESS
->
-SECURITY
->
-VERIFICATION
->
-RELIABILITY
->
-SPEED
-
-Use:
-
-PARALLELISM
-+
-SPECIALIZATION
-+
-AUTOMATION
-+
-LOCAL AI
-+
-REAL EXECUTION
-+
-REAL EVIDENCE
-
-to maximize safe execution speed.
-
-
----
-
-35. FINAL EXECUTION PIPELINE
-
-KHALED-MASTER-PLAN.md
-        ↓
-Repository Audit
-        ↓
-Current Failure Detection
-        ↓
-Architecture
-        ↓
-Research
-        ↓
-OpenCode
-        ↓
-Ollama
-        ↓
-Qwen
-        ↓
-Implementation
-        ↓
-Build
-        ↓
-Tests
-        ↓
-Security
-        ↓
-Browser
-        ↓
-Compatibility
-        ↓
-Verification
-        ↓
-Repair if required
-        ↓
-Rebuild
-        ↓
-Retest
-        ↓
-Independent Review
-        ↓
-Evidence Verification
-        ↓
-Pull Request
-
-FINAL RULE:
-
-NO EVIDENCE = NO CLAIM
-NO EXECUTION = NO RESULT
-NO VERIFICATION = NOT VERIFIED
-NO SUCCESS = NO "COMPLETE"
-
-
-
+  contents: read
+
+concurrency:
+  group: khaled-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_VERSION: "8.0.x"
+  CONFIGURATION: Release
+
+jobs:
+
+  validate:
+    name: Validate Repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate required files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          test -f "KHALED-MASTER-PLAN.md"
+
+          echo "Repository validation passed."
+
+      - name: Detect project
+        id: project
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mapfile -t PROJECTS < <(
+            find . \
+              -type f \
+              -name "*.sln" -o -name "*.slnx" -o -name "*.csproj" \
+              -not -path "./.git/*" \
+              | sort
+          )
+
+          if (( ${#PROJECTS[@]} == 0 )); then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::error::No .NET solution or project was found."
+            exit 1
+          fi
+
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
+          printf '%s\n' "${PROJECTS[@]}" \
+            | tee project-list.txt
+
+      - name: Upload project manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: khaled-project-manifest
+          path: project-list.txt
+          if-no-files-found: error
+
+
+  build:
+    name: Build
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          cache: true
+
+      - name: Discover projects
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          find . \
+            -type f \
+            -name "*.sln" -o -name "*.slnx" -o -name "*.csproj" \
+            -not -path "./.git/*" \
+            | sort \
+            | tee project-list.txt
+
+      - name: Restore
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          while IFS= read -r project; do
+            [ -z "$project" ] && continue
+            dotnet restore "$project"
+          done < project-list.txt
+
+      - name: Build
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          while IFS= read -r project; do
+            [ -z "$project" ] && continue
+
+            dotnet build "$project" \
+              --configuration "$CONFIGURATION" \
+              --no-restore \
+              --verbosity minimal
+          done < project-list.txt
+
+      - name: Publish build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khaled-build-evidence
+          path: |
+            project-list.txt
+            **/bin/**/*.dll
+          if-no-files-found: warn
+
+
+  test:
+    name: Test
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          cache: true
+
+      - name: Discover test projects
+        id: tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          find . \
+            -type f \
+            -name "*.csproj" \
+            -not -path "./.git/*" \
+            | grep -Ei "(test|tests)" \
+            | sort \
+            | tee test-list.txt || true
+
+      - name: Restore
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          while IFS= read -r project; do
+            [ -z "$project" ] && continue
+            dotnet restore "$project"
+          done < test-list.txt
+
+      - name: Test
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ ! -s test-list.txt ]; then
+            echo "::warning::No test project detected."
+            exit 0
+          fi
+
+          while IFS= read -r project; do
+            [ -z "$project" ] && continue
+
+            dotnet test "$project" \
+              --configuration "$CONFIGURATION" \
+              --no-restore \
+              --verbosity normal
+          done < test-list.txt
+
+      - name: Upload test manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khaled-test-evidence
+          path: test-list.txt
+          if-no-files-found: warn
+
+
+  security:
+    name: Security and Integrity
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Repository integrity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if git diff --exit-code; then
+            echo "Working tree is clean."
+          else
+            echo "::error::Unexpected repository modifications detected."
+            exit 1
+          fi
+
+      - name: Detect suspicious tracked secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if git grep -n -I -E \
+            'AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY' \
+            -- ':!*.lock.yml'; then
+            echo "::error::Potential credential material detected."
+            exit 1
+          fi
+
+          echo "Secret-pattern scan passed."
+
+
+  package:
+    name: Package Evidence
+    needs: [build, test, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Create evidence package
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p artifacts
+
+          {
+            echo "KHALED CI EVIDENCE"
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Commit: $GITHUB_SHA"
+            echo "Ref: $GITHUB_REF"
+            echo "Workflow: $GITHUB_WORKFLOW"
+            echo "Run: $GITHUB_RUN_ID"
+            echo "Configuration: $CONFIGURATION"
+            echo "DOTNET_VERSION: $DOTNET_VERSION"
+            echo
+            echo "Tracked files:"
+            git ls-files
+          } > artifacts/build-evidence.txt
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: KHALED-evidence-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+
+
+  result:
+    name: Final Verification
+    needs: [validate, build, test, security, package]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Evaluate pipeline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          RESULTS=(
+            "${{ needs.validate.result }}"
+            "${{ needs.build.result }}"
+            "${{ needs.test.result }}"
+            "${{ needs.security.result }}"
+            "${{ needs.package.result }}"
+          )
+
+          for result in "${RESULTS[@]}"; do
+            if [ "$result" != "success" ]; then
+              echo "::error::KHALED pipeline failed: $result"
+              exit 1
+            fi
+          done
+
+          echo "KHALED pipeline completed successfully."

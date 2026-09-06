@@ -1,137 +1,239 @@
-name: KHALED CI
-
+---
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
-jobs:
-  build:
-    runs-on: windows-latest
-    timeout-minutes: 30
+engine: copilot
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+safe-outputs:
+  create-pull-request:
+  add-comment:
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
+---
 
-      - name: Create project
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
+# KHALED — Autonomous Full Product Builder
 
-          if (!(Test-Path "KHALED-X.csproj")) {
-            dotnet new console `
-              --name KHALED-X `
-              --framework net8.0 `
-              --output .
-          }
+You are the senior software engineering team responsible for implementing the repository.
 
-      - name: Restore
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          dotnet restore KHALED-X.csproj
+SOURCE OF TRUTH:
+- KHALED-MASTER-PLAN.md
+- Actual repository files
+- Actual compiler output
+- Actual test output
+- Actual verification results
 
-      - name: Build
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          dotnet build KHALED-X.csproj `
-            --configuration Release `
-            --no-restore `
-            --nologo
+MISSION:
 
-      - name: Run
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          dotnet run `
-            --project KHALED-X.csproj `
-            --configuration Release `
-            --no-build
+Build the ACTUAL KHALED + REVO AI product described by KHALED-MASTER-PLAN.md.
 
-      - name: Publish
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
+Do NOT create a demo.
+Do NOT create a toy Console application.
+Do NOT claim completion from generated files alone.
+Do NOT simulate tests.
+Do NOT fabricate Autodesk compatibility.
+Do NOT remove requirements merely to obtain a successful build.
 
-          Remove-Item "artifacts" -Recurse -Force -ErrorAction SilentlyContinue
+==================================================
+PHASE 1 — REPOSITORY AUDIT
+==================================================
 
-          dotnet publish KHALED-X.csproj `
-            --configuration Release `
-            --runtime win-x64 `
-            --self-contained false `
-            --output artifacts/publish `
-            --nologo
+Inspect the entire repository first.
 
-          if (!(Test-Path "artifacts/publish")) {
-            throw "Publish failed."
-          }
+Determine:
+- current files
+- current source code
+- current workflows
+- current project structure
+- existing tests
+- existing build errors
+- missing implementation
+- duplicated or contradictory requirements
 
-      - name: Generate SHA256
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
+Preserve useful existing work.
 
-          $files = Get-ChildItem "artifacts/publish" -File -Recurse
+Never overwrite unrelated files.
 
-          if ($files.Count -eq 0) {
-            throw "No published files found."
-          }
+==================================================
+PHASE 2 — IMPLEMENTATION
+==================================================
 
-          $hashes = foreach ($file in $files) {
-            $h = Get-FileHash $file.FullName -Algorithm SHA256
+Implement the architecture specified in KHALED-MASTER-PLAN.md.
 
-            [PSCustomObject]@{
-              File = $file.FullName
-              SHA256 = $h.Hash
-            }
-          }
+At minimum implement the real architecture for:
 
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+KHALED:
+- install
+- verify
+- status
+- upgrade
+- repair
+- uninstall
+- discovery
+- planning
+- policy
+- risk
+- execution gate
+- execution
+- verification
+- evidence
+- recovery
+- rollback
 
-          $hashes |
-            ConvertTo-Json -Depth 5 |
-            Set-Content "artifacts/SHA256.json"
+REVO AI:
+- Intent Engine
+- Context Engine
+- Planning Engine
+- Command Normalizer
+- Validation Engine
+- Policy Engine
+- Risk Engine
+- Execution Gate
+- Adapter Router
+- Verification Engine
+- Recovery Engine
 
-      - name: Verification
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
+AI PROVIDERS:
+- provider abstraction
+- disabled/deterministic mode
+- local AI provider abstraction
+- optional external provider abstraction
 
-          @"
-          KHALED CI VERIFICATION
+AUTODESK:
+- Revit adapter architecture
+- AutoCAD adapter architecture
+- version-specific compatibility layer
+- capability detection
+- graceful unsupported-version handling
 
-          Repository: $env:GITHUB_REPOSITORY
-          Commit: $env:GITHUB_SHA
-          Build: PASS
-          Runtime: PASS
-          Publish: PASS
-          SHA256: PASS
+BROWSER:
+- browser abstraction
+- Playwright integration where required
+- semantic/accessibility-first interaction
+- no CAPTCHA/auth/security bypass
 
-          Autodesk compatibility is NOT claimed here.
-          Revit/AutoCAD compatibility requires real Autodesk
-          SDK/application testing.
-          "@ | Set-Content "artifacts/VERIFICATION.txt"
+SECURITY:
+- secret redaction
+- path allowlists
+- command allowlists
+- patch validation
+- safe execution
+- no credentials in repository
 
-      - name: Upload artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: KHALED-${{ github.sha }}
-          path: artifacts
-          if-no-files-found: error
+==================================================
+PHASE 3 — REAL BUILD
+==================================================
+
+Use the actual compiler.
+
+Build the real project.
+
+Never replace failing code with fake placeholder success.
+
+If compilation fails:
+1. capture the exact error
+2. identify the responsible file
+3. diagnose the root cause
+4. make the smallest safe correction
+5. rebuild
+
+==================================================
+PHASE 4 — REAL TESTING
+==================================================
+
+Create meaningful automated tests for implemented functionality.
+
+Run:
+- unit tests
+- integration tests where possible
+- static validation
+- security validation
+- package validation
+- installer/deployment validation
+
+Never mark a test as passed unless it actually executed successfully.
+
+==================================================
+PHASE 5 — AUTONOMOUS REPAIR
+==================================================
+
+If build or tests fail:
+
+Analyze the actual logs.
+
+Maximum:
+5 repair attempts per failure class.
+
+Every repair must:
+- be based on actual evidence
+- modify only required files
+- preserve security
+- preserve requirements
+- never delete tests to hide failures
+- never weaken validation
+- rebuild
+- retest
+
+If still failing, stop and report the exact unresolved failure.
+
+==================================================
+PHASE 6 — VERIFICATION
+==================================================
+
+The product may be called COMPLETE only when:
+
+- source implementation exists
+- build succeeds
+- tests succeed
+- security checks succeed
+- packaging succeeds
+- verification succeeds
+- required artifacts exist
+- no mandatory requirement is silently omitted
+
+For Revit 2016–2027 and AutoCAD 2016–2027:
+
+DO NOT claim a version is supported unless its adapter can actually be built/tested or the repository contains concrete evidence supporting that claim.
+
+==================================================
+PHASE 7 — EVIDENCE
+==================================================
+
+Generate:
+
+artifacts/
+  build/
+  tests/
+  verification/
+  logs/
+  hashes/
+  release/
+
+Include:
+
+- build result
+- test result
+- compiler warnings/errors
+- verification result
+- artifact inventory
+- SHA256 hashes
+- repair history
+- unsupported capabilities
+- unresolved failures
+
+==================================================
+FINAL RULE
+==================================================
+
+Never output "COMPLETE" merely because the workflow finished.
+
+Output COMPLETE only when the actual acceptance criteria are proven by executable evidence.
+
+Otherwise output NOT READY with the exact reason.
+
+If implementation is incomplete, continue implementing rather than pretending that the project is finished.
+
+Create a pull request containing the actual implementation and evidence when the repository has meaningful changes.

@@ -1,25 +1,5 @@
-KHALED-MASTER-PLAN.md
-        ↓
-     build.yml
-        ↓
-Bootstrap حقيقي
-        ↓
-إنشاء المشروع
-        ↓
-إنشاء الكود
-        ↓
-Build
-        ↓
-Test
-        ↓
-اكتشاف الخطأ الحقيقي
-        ↓
-Repair آمن ومحدود
-        ↓
-Build + Test مرة أخرى
-        ↓
-Verification
-        ↓
-Publish
-        ↓
-Evidence + SHA256
+Gooddaygoobuy-/
+├── KHALED-MASTER-PLAN.md
+└── .github/
+    └── workflows/
+        └── build.yml       ← ملف التنفيذ

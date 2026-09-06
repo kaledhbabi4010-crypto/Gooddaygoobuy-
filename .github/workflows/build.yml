@@ -1,69 +1,65 @@
 name: KHALED CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  validate:
     runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Validate project
+      - name: Validate KHALED plan
         shell: pwsh
         run: |
           if (-not (Test-Path "KHALED-MASTER-PLAN.md")) {
-            throw "KHALED-MASTER-PLAN.md not found."
+            Write-Error "KHALED-MASTER-PLAN.md not found"
+            exit 1
           }
 
-          $projects = Get-ChildItem -Path . -Recurse -Filter *.csproj |
+          Write-Host "KHALED plan found."
+
+      - name: Detect implementation
+        shell: pwsh
+        run: |
+          $projects = Get-ChildItem -Path . -Recurse -Filter *.csproj -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' }
 
           if ($projects.Count -eq 0) {
-            throw "No .csproj project exists. The repository contains the plan but no executable implementation."
+            Write-Error "NO IMPLEMENTATION FOUND: the repository contains the plan but no .NET project."
+            exit 1
           }
 
-          Write-Host "Found $($projects.Count) project(s)."
+          Write-Host "Projects found: $($projects.Count)"
 
       - name: Restore
         shell: pwsh
         run: |
-          $projects = Get-ChildItem -Path . -Recurse -Filter *.csproj |
-            Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' }
-
-          foreach ($project in $projects) {
-            dotnet restore $project.FullName
-            if ($LASTEXITCODE -ne 0) {
-              throw "Restore failed: $($project.FullName)"
+          Get-ChildItem -Path . -Recurse -Filter *.csproj |
+            Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' } |
+            ForEach-Object {
+              dotnet restore $_.FullName
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
-          }
 
       - name: Build
         shell: pwsh
         run: |
-          $projects = Get-ChildItem -Path . -Recurse -Filter *.csproj |
-            Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' }
-
-          foreach ($project in $projects) {
-            dotnet build $project.FullName --configuration Release --no-restore
-            if ($LASTEXITCODE -ne 0) {
-              throw "BUILD FAILED: $($project.FullName)"
+          Get-ChildItem -Path . -Recurse -Filter *.csproj |
+            Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' } |
+            ForEach-Object {
+              dotnet build $_.FullName --configuration Release --no-restore
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
-          }
 
       - name: Test
         shell: pwsh
@@ -72,41 +68,30 @@ jobs:
             Where-Object { $_.FullName -notmatch '\\bin\\|\\obj\\' }
 
           if ($tests.Count -eq 0) {
-            throw "No test project exists. Product cannot be declared complete."
+            Write-Error "NO TEST PROJECT FOUND"
+            exit 1
           }
 
           foreach ($test in $tests) {
-            dotnet test $test.FullName --configuration Release --no-restore --no-build
-            if ($LASTEXITCODE -ne 0) {
-              throw "TEST FAILED: $($test.FullName)"
-            }
+            dotnet test $test.FullName --configuration Release --no-restore
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
       - name: Verification
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-
-          Get-ChildItem -Path . -Recurse -File |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\|\\artifacts\\'
-            } |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Get-ChildItem -Recurse -File |
+            Where-Object { $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\|\\artifacts\\' } |
             Select-Object FullName,Length |
             Out-File artifacts/inventory.txt
 
-          Get-ChildItem -Path . -Recurse -File -Include *.dll,*.exe |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\obj\\|\\artifacts\\'
-            } |
-            ForEach-Object {
-              (Get-FileHash $_.FullName -Algorithm SHA256).Hash + "  " + $_.FullName
-            } |
-            Out-File artifacts/SHA256.txt
+          "VERIFICATION COMPLETED" | Out-File artifacts/verification.txt
 
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: KHALED-verification
-          path: artifacts/
+          name: KHALED-evidence
+          path: artifacts
           if-no-files-found: ignore

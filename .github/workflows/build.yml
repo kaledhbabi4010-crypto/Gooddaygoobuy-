@@ -1,5 +1,9 @@
-Gooddaygoobuy-/
-├── KHALED-MASTER-PLAN.md
-└── .github/
-    └── workflows/
-        └── build.yml   ← ضع الكود هنا
+KHALED-MASTER-PLAN.md
+        ↓
+الخطة والمواصفات الكاملة
+        ↓
+.github/workflows/build.yml
+        ↓
+المحرك الذي ينفذ الخطة فعليًا
+        ↓
+Build → Test → Verify → Repair → Rebuild

@@ -1,280 +1,692 @@
-name: KHALED CI Factory
+writing{variant="document" title="build.yml" id="31684"}name: KHALED | Deterministic CI
 
-run-name: "KHALED • ${{ github.event_name }} • ${{ github.sha }}"
+on:workflow_dispatch:push:branches: [main]pull_request:branches: [main]
+
+permissions:contents: read
+
+concurrency:group: khaled-ci-${{ github.ref }}cancel-in-progress: true
+
+defaults:run:shell: bash
+
+env:DOTNET_NOLOGO: "true"DOTNET_CLI_TELEMETRY_OPTOUT: "true"DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"CONFIGURATION: Release
+
+jobs:
+
+preflight:name: "01 • Preflight"runs-on: ubuntu-latesttimeout-minutes: 10
+
+outputs:
+  solution: ${{ steps.detect.outputs.solution }}
+  projects: ${{ steps.detect.outputs.projects }}
+  tests: ${{ steps.detect.outputs.tests }}
+
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
+
+  - name: Validate repository
+    run: |
+      set -Eeuo pipefail
+
+      [[ -f "KHALED-MASTER-PLAN.md" ]] || {
+        echo "::error::KHALED-MASTER-PLAN.md is missing."
+        exit 1
+      }
+
+      git diff --exit-code
+
+  - name: Detect .NET graph
+    id: detect
+    run: |
+      set -Eeuo pipefail
+
+      mapfile -t SOLUTIONS < <(
+        find . -type f \
+          -name "*.sln" -o -name "*.slnx" \
+          -not -path "./.git/*" \
+          | sort
+      )
+
+      mapfile -t PROJECTS < <(
+        find . -type f \
+          -name "*.csproj" \
+          -not -path "./.git/*" \
+          | sort
+      )
+
+      mapfile -t TESTS < <(
+        printf '%s\n' "${PROJECTS[@]}" |
+        grep -Ei '(^|/)(test|tests)(/|\.|$)|(\.Tests?\.csproj)$' ||
+        true
+      )
+
+      (( ${#PROJECTS[@]} > 0 )) || {
+        echo "::error::No .csproj files detected."
+        exit 1
+      }
+
+      printf '%s\n' "${SOLUTIONS[@]}" > solutions.txt
+      printf '%s\n' "${PROJECTS[@]}" > projects.txt
+      printf '%s\n' "${TESTS[@]}" > tests.txt
+
+      {
+        echo "solution=${SOLUTIONS[0]:-}"
+        echo "projects=${#PROJECTS[@]}"
+        echo "tests=${#TESTS[@]}"
+      } >> "$GITHUB_OUTPUT"
+
+  - name: Publish discovery
+    uses: actions/upload-artifact@v4
+    with:
+      name: khaled-discovery-${{ github.run_id }}
+      path: |
+        solutions.txt
+        projects.txt
+        tests.txt
+      if-no-files-found: error
+
+restore:name: "02 • Restore"needs: preflightruns-on: ubuntu-latesttimeout-minutes: 20
+
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+
+  - name: Setup .NET
+    uses: actions/setup-dotnet@v4
+    with:
+      dotnet-version: |
+        8.0.x
+        9.0.x
+
+  - name: Restore solution
+    run: |
+      set -Eeuo pipefail
+
+      if [[ -s solutions.txt ]]; then
+        while IFS= read -r solution; do
+          [[ -n "$solution" ]] || continue
+          dotnet restore "$solution" --locked-mode=false
+        done < solutions.txt
+      else
+        while IFS= read -r project; do
+          [[ -n "$project" ]] || continue
+          dotnet restore "$project" --locked-mode=false
+        done < projects.txt
+      fi
+
+  - name: Cache NuGet
+    uses: actions/cache@v4
+    with:
+      path: ~/.nuget/packages
+      key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/packages.lock.json', '**/NuGet.config') }}
+      restore-keys: |
+        nuget-${{ runner.os }}-
+
+build:name: "03 • Build"needs: restoreruns-on: ubuntu-latesttimeout-minutes: 30
+
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+
+  - name: Setup .NET
+    uses: actions/setup-dotnet@v4
+    with:
+      dotnet-version: |
+        8.0.x
+        9.0.x
+
+  - name: Restore
+    run: |
+      set -Eeuo pipefail
+
+      while IFS= read -r project; do
+        [[ -n "$project" ]] || continue
+        dotnet restore "$project"
+      done < projects.txt
+
+  - name: Compile
+    run: |
+      set -Eeuo pipefail
+
+      mkdir -p artifacts/build
+
+      while IFS= read -r project; do
+        [[ -n "$project" ]] || continue
+
+        dotnet build "$project" \
+          --configuration "$CONFIGURATION" \
+          --no-restore \
+          --nologo \
+          --verbosity minimal
+      done < projects.txt
+
+  - name: Collect build outputs
+    if: always()
+    run: |
+      set +e
+
+      find . \
+        -type f \
+        -path "*/bin/*" -o -path "*/obj/*" \
+        -not -path "./.git/*" \
+        | sort > artifacts/build/outputs.txt
+
+  - name: Upload build evidence
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: khaled-build-${{ github.run_id }}
+      path: artifacts/build/
+      if-no-files-found: warn
+
+test:name: "04 • Test"needs: buildruns-on: ubuntu-latesttimeout-minutes: 30
+
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+
+  - name: Setup .NET
+    uses: actions/setup-dotnet@v4
+    with:
+      dotnet-version: |
+        8.0.x
+        9.0.x
+
+  - name: Restore
+    run: |
+      set -Eeuo pipefail
+
+      if [[ ! -s tests.txt ]]; then
+        echo "::warning::No test projects detected."
+        exit 0
+      fi
+
+      while IFS= read -r project; do
+        [[ -n "$project" ]] || continue
+        dotnet restore "$project"
+      done < tests.txt
+
+  - name: Execute tests
+    run: |
+      set -Eeuo pipefail
+
+      if [[ ! -s tests.txt ]]; then
+        echo "::warning::No test projects detected."
+        exit 0
+      fi
+
+      while IFS= read -r project; do
+        [[ -n "$project" ]] || continue
+
+        dotnet test "$project" \
+          --configuration "$CONFIGURATION" \
+          --no-restore \
+          --nologo \
+          --verbosity normal \
+          --logger "trx;LogFileName=test-results.trx"
+      done < tests.txt
+
+  - name: Upload test evidence
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: khaled-tests-${{ github.run_id }}
+      path: |
+        **/*.trx
+      if-no-files-found: warn
+
+static-analysis:name: "05 • Static Analysis"needs: buildruns-on: ubuntu-latesttimeout-minutes: 15
+
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+
+  - name: Source validation
+    run: |
+      set -Eeuo pipefail
+
+      if git grep -n -I \
+        -E 'AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+      then
+        echo "::error::Potential credential material detected in tracked source."
+        exit 1
+      fi
+
+  - name: Dangerous artifact scan
+    run: |
+      set -Eeuo pipefail
+
+      if find . -type f \
+        -name "*.pem" -o -name "*.key" -o -name "*.pfx" -o -name "*.p12" \
+        -not -path "./.git/*" \
+        | grep -q .
+      then
+        echo "::error::Potential secret/key artifact detected."
+        exit 1
+      fi
+
+  - name: Repository state
+    run: |
+      set -Eeuo pipefail
+      git diff --exit-code
+      git status --short
+
+package:name: "06 • Package Evidence"needs:- build- test- static-analysisruns-on: ubuntu-latesttimeout-minutes: 15
+
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
+
+  - name: Generate evidence
+    run: |
+      set -Eeuo pipefail
+
+      mkdir -p artifacts
+
+      cat > artifacts/KHALED-CI-EVIDENCE.txt <<EOF
+      KHALED CI EVIDENCE
+      ==================
+      Repository : ${GITHUB_REPOSITORY}
+      Commit     : ${GITHUB_SHA}
+      Ref        : ${GITHUB_REF}
+      Run        : ${GITHUB_RUN_ID}
+      Workflow   : ${GITHUB_WORKFLOW}
+      Runner     : ${RUNNER_OS}
+      Result     : BUILD/TEST/STATIC ANALYSIS PIPELINE
+      EOF
+
+      git ls-files > artifacts/tracked-files.txt
+
+  - name: Upload evidence
+    uses: actions/upload-artifact@v4
+    with:
+      name: KHALED-evidence-${{ github.run_id }}
+      path: artifacts/
+      if-no-files-found: error
+
+gate:name: "07 • Release Gate"if: always()needs:- preflight- restore- build- test- static-analysis- packageruns-on: ubuntu-latesttimeout-minutes: 5
+
+steps:
+  - name: Evaluate
+    run: |
+      set -Eeuo pipefail
+
+      declare -A STATUS=(
+        [preflight]="${{ needs.preflight.result }}"
+        [restore]="${{ needs.restore.result }}"
+        [build]="${{ needs.build.result }}"
+        [test]="${{ needs.test.result }}"
+        [static-analysis]="${{ needs.static-analysis.result }}"
+        [package]="${{ needs.package.result }}"
+      )
+
+      FAILED=0
+
+      for JOB in "${!STATUS[@]}"; do
+        RESULT="${STATUS[$JOB]}"
+        echo "${JOB}: ${RESULT}"
+
+        if [[ "$RESULT" != "success" ]]; then
+          FAILED=1
+        fi
+      done
+
+      if (( FAILED != 0 )); then
+        echo "::error::KHALED release gate rejected the run."
+        exit 1
+      fi
+
+      echo "KHALED release gate: PASS"
+
+writing{variant="document" title="build.yml" id="31684"}
+name: KHALED | Deterministic CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: khaled-${{ github.workflow }}-${{ github.ref }}
+  group: khaled-ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 env:
-  DOTNET_VERSION: "8.0.x"
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
   CONFIGURATION: Release
 
 jobs:
 
-  validate:
-    name: Validate Repository
+  preflight:
+    name: "01 • Preflight"
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    outputs:
+      solution: ${{ steps.detect.outputs.solution }}
+      projects: ${{ steps.detect.outputs.projects }}
+      tests: ${{ steps.detect.outputs.tests }}
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Validate required files
-        shell: bash
+      - name: Validate repository
         run: |
           set -Eeuo pipefail
 
-          test -f "KHALED-MASTER-PLAN.md"
+          [[ -f "KHALED-MASTER-PLAN.md" ]] || {
+            echo "::error::KHALED-MASTER-PLAN.md is missing."
+            exit 1
+          }
 
-          echo "Repository validation passed."
+          git diff --exit-code
 
-      - name: Detect project
-        id: project
-        shell: bash
+      - name: Detect .NET graph
+        id: detect
         run: |
           set -Eeuo pipefail
 
-          mapfile -t PROJECTS < <(
-            find . \
-              -type f \
-              -name "*.sln" -o -name "*.slnx" -o -name "*.csproj" \
+          mapfile -t SOLUTIONS < <(
+            find . -type f \
+              -name "*.sln" -o -name "*.slnx" \
               -not -path "./.git/*" \
               | sort
           )
 
-          if (( ${#PROJECTS[@]} == 0 )); then
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "::error::No .NET solution or project was found."
+          mapfile -t PROJECTS < <(
+            find . -type f \
+              -name "*.csproj" \
+              -not -path "./.git/*" \
+              | sort
+          )
+
+          mapfile -t TESTS < <(
+            printf '%s\n' "${PROJECTS[@]}" |
+            grep -Ei '(^|/)(test|tests)(/|\.|$)|(\.Tests?\.csproj)$' ||
+            true
+          )
+
+          (( ${#PROJECTS[@]} > 0 )) || {
+            echo "::error::No .csproj files detected."
             exit 1
-          fi
+          }
 
-          echo "found=true" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${SOLUTIONS[@]}" > solutions.txt
+          printf '%s\n' "${PROJECTS[@]}" > projects.txt
+          printf '%s\n' "${TESTS[@]}" > tests.txt
 
-          printf '%s\n' "${PROJECTS[@]}" \
-            | tee project-list.txt
+          {
+            echo "solution=${SOLUTIONS[0]:-}"
+            echo "projects=${#PROJECTS[@]}"
+            echo "tests=${#TESTS[@]}"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Upload project manifest
+      - name: Publish discovery
         uses: actions/upload-artifact@v4
         with:
-          name: khaled-project-manifest
-          path: project-list.txt
+          name: khaled-discovery-${{ github.run_id }}
+          path: |
+            solutions.txt
+            projects.txt
+            tests.txt
           if-no-files-found: error
 
 
+  restore:
+    name: "02 • Restore"
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Restore solution
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -s solutions.txt ]]; then
+            while IFS= read -r solution; do
+              [[ -n "$solution" ]] || continue
+              dotnet restore "$solution" --locked-mode=false
+            done < solutions.txt
+          else
+            while IFS= read -r project; do
+              [[ -n "$project" ]] || continue
+              dotnet restore "$project" --locked-mode=false
+            done < projects.txt
+          fi
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/packages.lock.json', '**/NuGet.config') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
   build:
-    name: Build
-    needs: validate
+    name: "03 • Build"
+    needs: restore
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-          cache: true
-
-      - name: Discover projects
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          find . \
-            -type f \
-            -name "*.sln" -o -name "*.slnx" -o -name "*.csproj" \
-            -not -path "./.git/*" \
-            | sort \
-            | tee project-list.txt
+          dotnet-version: |
+            8.0.x
+            9.0.x
 
       - name: Restore
-        shell: bash
         run: |
           set -Eeuo pipefail
 
           while IFS= read -r project; do
-            [ -z "$project" ] && continue
+            [[ -n "$project" ]] || continue
             dotnet restore "$project"
-          done < project-list.txt
+          done < projects.txt
 
-      - name: Build
-        shell: bash
+      - name: Compile
         run: |
           set -Eeuo pipefail
 
+          mkdir -p artifacts/build
+
           while IFS= read -r project; do
-            [ -z "$project" ] && continue
+            [[ -n "$project" ]] || continue
 
             dotnet build "$project" \
               --configuration "$CONFIGURATION" \
               --no-restore \
+              --nologo \
               --verbosity minimal
-          done < project-list.txt
+          done < projects.txt
 
-      - name: Publish build evidence
+      - name: Collect build outputs
+        if: always()
+        run: |
+          set +e
+
+          find . \
+            -type f \
+            -path "*/bin/*" -o -path "*/obj/*" \
+            -not -path "./.git/*" \
+            | sort > artifacts/build/outputs.txt
+
+      - name: Upload build evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: khaled-build-evidence
-          path: |
-            project-list.txt
-            **/bin/**/*.dll
+          name: khaled-build-${{ github.run_id }}
+          path: artifacts/build/
           if-no-files-found: warn
 
 
   test:
-    name: Test
+    name: "04 • Test"
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-          cache: true
-
-      - name: Discover test projects
-        id: tests
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          find . \
-            -type f \
-            -name "*.csproj" \
-            -not -path "./.git/*" \
-            | grep -Ei "(test|tests)" \
-            | sort \
-            | tee test-list.txt || true
+          dotnet-version: |
+            8.0.x
+            9.0.x
 
       - name: Restore
-        shell: bash
         run: |
           set -Eeuo pipefail
 
-          while IFS= read -r project; do
-            [ -z "$project" ] && continue
-            dotnet restore "$project"
-          done < test-list.txt
-
-      - name: Test
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          if [ ! -s test-list.txt ]; then
-            echo "::warning::No test project detected."
+          if [[ ! -s tests.txt ]]; then
+            echo "::warning::No test projects detected."
             exit 0
           fi
 
           while IFS= read -r project; do
-            [ -z "$project" ] && continue
+            [[ -n "$project" ]] || continue
+            dotnet restore "$project"
+          done < tests.txt
+
+      - name: Execute tests
+        run: |
+          set -Eeuo pipefail
+
+          if [[ ! -s tests.txt ]]; then
+            echo "::warning::No test projects detected."
+            exit 0
+          fi
+
+          while IFS= read -r project; do
+            [[ -n "$project" ]] || continue
 
             dotnet test "$project" \
               --configuration "$CONFIGURATION" \
               --no-restore \
-              --verbosity normal
-          done < test-list.txt
+              --nologo \
+              --verbosity normal \
+              --logger "trx;LogFileName=test-results.trx"
+          done < tests.txt
 
-      - name: Upload test manifest
+      - name: Upload test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: khaled-test-evidence
-          path: test-list.txt
+          name: khaled-tests-${{ github.run_id }}
+          path: |
+            **/*.trx
           if-no-files-found: warn
 
 
-  security:
-    name: Security and Integrity
-    needs: [build, test]
+  static-analysis:
+    name: "05 • Static Analysis"
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v4
 
-      - name: Repository integrity
-        shell: bash
+      - name: Source validation
         run: |
           set -Eeuo pipefail
 
-          if git diff --exit-code; then
-            echo "Working tree is clean."
-          else
-            echo "::error::Unexpected repository modifications detected."
+          if git grep -n -I \
+            -E 'AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          then
+            echo "::error::Potential credential material detected in tracked source."
             exit 1
           fi
 
-      - name: Detect suspicious tracked secrets
-        shell: bash
+      - name: Dangerous artifact scan
         run: |
           set -Eeuo pipefail
 
-          if git grep -n -I -E \
-            'AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY' \
-            -- ':!*.lock.yml'; then
-            echo "::error::Potential credential material detected."
+          if find . -type f \
+            -name "*.pem" -o -name "*.key" -o -name "*.pfx" -o -name "*.p12" \
+            -not -path "./.git/*" \
+            | grep -q .
+          then
+            echo "::error::Potential secret/key artifact detected."
             exit 1
           fi
 
-          echo "Secret-pattern scan passed."
+      - name: Repository state
+        run: |
+          set -Eeuo pipefail
+          git diff --exit-code
+          git status --short
 
 
   package:
-    name: Package Evidence
-    needs: [build, test, security]
+    name: "06 • Package Evidence"
+    needs:
+      - build
+      - test
+      - static-analysis
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Create evidence package
-        shell: bash
+      - name: Generate evidence
         run: |
           set -Eeuo pipefail
 
           mkdir -p artifacts
 
-          {
-            echo "KHALED CI EVIDENCE"
-            echo "Repository: $GITHUB_REPOSITORY"
-            echo "Commit: $GITHUB_SHA"
-            echo "Ref: $GITHUB_REF"
-            echo "Workflow: $GITHUB_WORKFLOW"
-            echo "Run: $GITHUB_RUN_ID"
-            echo "Configuration: $CONFIGURATION"
-            echo "DOTNET_VERSION: $DOTNET_VERSION"
-            echo
-            echo "Tracked files:"
-            git ls-files
-          } > artifacts/build-evidence.txt
+          cat > artifacts/KHALED-CI-EVIDENCE.txt <<EOF
+          KHALED CI EVIDENCE
+          ==================
+          Repository : ${GITHUB_REPOSITORY}
+          Commit     : ${GITHUB_SHA}
+          Ref        : ${GITHUB_REF}
+          Run        : ${GITHUB_RUN_ID}
+          Workflow   : ${GITHUB_WORKFLOW}
+          Runner     : ${RUNNER_OS}
+          Result     : BUILD/TEST/STATIC ANALYSIS PIPELINE
+          EOF
+
+          git ls-files > artifacts/tracked-files.txt
 
       - name: Upload evidence
         uses: actions/upload-artifact@v4
@@ -284,31 +696,47 @@ jobs:
           if-no-files-found: error
 
 
-  result:
-    name: Final Verification
-    needs: [validate, build, test, security, package]
+  gate:
+    name: "07 • Release Gate"
     if: always()
+    needs:
+      - preflight
+      - restore
+      - build
+      - test
+      - static-analysis
+      - package
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
-      - name: Evaluate pipeline
-        shell: bash
+      - name: Evaluate
         run: |
           set -Eeuo pipefail
 
-          RESULTS=(
-            "${{ needs.validate.result }}"
-            "${{ needs.build.result }}"
-            "${{ needs.test.result }}"
-            "${{ needs.security.result }}"
-            "${{ needs.package.result }}"
+          declare -A STATUS=(
+            [preflight]="${{ needs.preflight.result }}"
+            [restore]="${{ needs.restore.result }}"
+            [build]="${{ needs.build.result }}"
+            [test]="${{ needs.test.result }}"
+            [static-analysis]="${{ needs.static-analysis.result }}"
+            [package]="${{ needs.package.result }}"
           )
 
-          for result in "${RESULTS[@]}"; do
-            if [ "$result" != "success" ]; then
-              echo "::error::KHALED pipeline failed: $result"
-              exit 1
+          FAILED=0
+
+          for JOB in "${!STATUS[@]}"; do
+            RESULT="${STATUS[$JOB]}"
+            echo "${JOB}: ${RESULT}"
+
+            if [[ "$RESULT" != "success" ]]; then
+              FAILED=1
             fi
           done
 
-          echo "KHALED pipeline completed successfully."
+          if (( FAILED != 0 )); then
+            echo "::error::KHALED release gate rejected the run."
+            exit 1
+          fi
+
+          echo "KHALED release gate: PASS"

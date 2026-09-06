@@ -1,12 +1,217 @@
-KHALED-MASTER-PLAN.md   ← المواصفات
-        ↓
-bootstrap.ps1           ← ينفذ إنشاء المشروع
-        ↓
-KHALED-X.csproj         ← مشروع حقيقي
-        ↓
-src/                    ← الكود الحقيقي
-tests/                  ← الاختبارات
-        ↓
-build.yml               ← يشغل كل شيء
-        ↓
-Build → Test → Verify
+name: KHALED Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: "8.0.x"
+  PROJECT: "KHALED-X.csproj"
+
+jobs:
+  build:
+    name: Bootstrap, Build, Test and Verify
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate master plan
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if (!(Test-Path "KHALED-MASTER-PLAN.md")) {
+            throw "KHALED-MASTER-PLAN.md is missing."
+          }
+
+          $content = Get-Content "KHALED-MASTER-PLAN.md" -Raw
+
+          if ([string]::IsNullOrWhiteSpace($content)) {
+            throw "KHALED-MASTER-PLAN.md is empty."
+          }
+
+          Write-Host "Master plan validated."
+
+      - name: Inspect repository
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Repository:"
+          Get-ChildItem -Force
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Bootstrap project if missing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if (!(Test-Path $env:PROJECT)) {
+
+            dotnet new console `
+              --name KHALED-X `
+              --framework net8.0 `
+              --output .
+
+            @"
+using System;
+
+namespace KHALED;
+
+public static class Program
+{
+    public static int Main(string[] args)
+    {
+        Console.WriteLine("KHALED bootstrap runtime.");
+
+        if (args.Length == 0)
+        {
+            Console.WriteLine("No command supplied.");
+            return 0;
+        }
+
+        var command = args[0].ToLowerInvariant();
+
+        return command switch
+        {
+            "install" => Run("install"),
+            "verify" => Run("verify"),
+            "status" => Run("status"),
+            "upgrade" => Run("upgrade"),
+            "repair" => Run("repair"),
+            "uninstall" => Run("uninstall"),
+            _ => Unknown(command)
+        };
+    }
+
+    private static int Run(string command)
+    {
+        Console.WriteLine($"KHALED command: {command}");
+        return 0;
+    }
+
+    private static int Unknown(string command)
+    {
+        Console.Error.WriteLine($"Unknown command: {command}");
+        return 2;
+    }
+}
+"@ | Set-Content -Encoding UTF8 "Program.cs"
+
+            Write-Host "Initial KHALED project created."
+          }
+          else {
+            Write-Host "Existing project detected. No overwrite performed."
+          }
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore $env:PROJECT
+
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet build $env:PROJECT `
+            --configuration Release `
+            --no-restore `
+            --nologo
+
+      - name: Test
+        shell: pwsh
+        run: |
+          if (Test-Path "tests") {
+            $projects = Get-ChildItem "tests" -Filter "*.csproj" -Recurse
+
+            if ($projects.Count -gt 0) {
+              foreach ($project in $projects) {
+                dotnet test $project.FullName `
+                  --configuration Release `
+                  --no-restore `
+                  --no-build `
+                  --nologo
+              }
+            }
+            else {
+              Write-Host "No test project exists yet."
+            }
+          }
+          else {
+            Write-Host "No tests directory exists yet."
+          }
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          dotnet publish $env:PROJECT `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained false `
+            --output artifacts/publish `
+            --nologo
+
+      - name: Generate SHA256
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          $files = Get-ChildItem "artifacts/publish" -File -Recurse
+
+          if ($files.Count -eq 0) {
+            throw "Publish produced no files."
+          }
+
+          $hashes = foreach ($file in $files) {
+            $hash = Get-FileHash $file.FullName -Algorithm SHA256
+
+            [PSCustomObject]@{
+              File = $file.FullName
+              SHA256 = $hash.Hash
+            }
+          }
+
+          $hashes | ConvertTo-Json -Depth 5 |
+            Set-Content -Encoding UTF8 "artifacts/SHA256.json"
+
+      - name: Generate verification evidence
+        shell: pwsh
+        run: |
+          @"
+          KHALED VERIFICATION EVIDENCE
+
+          Repository: $env:GITHUB_REPOSITORY
+          Commit: $env:GITHUB_SHA
+          Workflow: $env:GITHUB_WORKFLOW
+          Run: $env:GITHUB_RUN_ID
+
+          Build: PASSED
+          Publish: PASSED
+          SHA256: GENERATED
+
+          Important:
+          This workflow does NOT claim Autodesk/Revit/AutoCAD compatibility.
+          Such compatibility requires actual compilation and testing against
+          the corresponding Autodesk SDK/application environment.
+          "@ | Set-Content -Encoding UTF8 "artifacts/VERIFICATION.txt"
+
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KHALED-build-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error

@@ -1,134 +1,80 @@
-name: KHALED Build Verify
-
+---
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["KHALED Build Verify"]
+    types: [completed]
 
 permissions:
   contents: read
+  pull-requests: write
+  issues: write
 
-jobs:
-  verify:
-    runs-on: windows-latest
+engine: copilot
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+safe-outputs:
+  create-pull-request:
+  add-comment:
+  create-issue:
 
-      - name: Repository audit
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
+---
 
-          if (!(Test-Path "KHALED-MASTER-PLAN.md")) {
-            throw "KHALED-MASTER-PLAN.md is missing."
-          }
+# KHALED AUTONOMOUS IMPLEMENTATION ENGINE
 
-          Write-Host "=== KHALED REPOSITORY AUDIT ==="
-          git status --short
+Act as the autonomous senior engineering team for this repository.
 
-          $projects = @(Get-ChildItem -Path . -Recurse -Filter *.csproj |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\'
-            })
+Read `KHALED-MASTER-PLAN.md` completely and inspect the entire repository before making changes.
 
-          $solutions = @(Get-ChildItem -Path . -Recurse -Filter *.sln* |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\'
-            })
+MISSION:
+Build the real KHALED + REVO AI product described by the master plan.
 
-          Write-Host "Projects: $($projects.Count)"
-          Write-Host "Solutions: $($solutions.Count)"
+Do NOT create a demo, toy project, fake implementation, placeholder implementation, simulated test, or false success.
 
-          if ($projects.Count -eq 0 -and $solutions.Count -eq 0) {
-            throw "NO REAL IMPLEMENTATION FOUND. The repository contains the plan but no buildable project."
-          }
+EXECUTE THIS LOOP:
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
+AUDIT
+→ PLAN
+→ IMPLEMENT
+→ BUILD
+→ TEST
+→ READ REAL ERRORS
+→ ROOT-CAUSE ANALYSIS
+→ REPAIR
+→ BUILD
+→ TEST
+→ VERIFY
+→ REPEAT
 
-      - name: Restore
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
+Requirements:
 
-          $projects = @(Get-ChildItem -Path . -Recurse -Filter *.csproj |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\'
-            })
+1. Implement the actual architecture and requirements in KHALED-MASTER-PLAN.md.
+2. Create missing source projects, modules, tests and configuration.
+3. Use the actual compiler and actual test runner.
+4. When Build/Test fails, inspect the real logs and repair the root cause.
+5. Repeat repairs automatically; do not stop at the first failure.
+6. Never delete tests or requirements to obtain success.
+7. Never claim Autodesk/Revit/AutoCAD compatibility without real evidence.
+8. Never simulate unavailable SDKs or external environments.
+9. Preserve all useful existing repository work.
+10. Make the smallest safe changes necessary.
+11. After every repair, rebuild and retest.
+12. Continue until all realistically verifiable requirements pass.
+13. Create a pull request containing the actual implementation and verification evidence.
+14. If something genuinely cannot be verified, document the exact blocker instead of pretending it works.
 
-          foreach ($project in $projects) {
-            Write-Host "RESTORE: $($project.FullName)"
-            dotnet restore $project.FullName
-            if ($LASTEXITCODE -ne 0) {
-              throw "RESTORE FAILED: $($project.FullName)"
-            }
-          }
+FINAL ACCEPTANCE:
 
-      - name: Build
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
+Only report COMPLETE when:
+- real source code exists;
+- build succeeds;
+- tests execute and pass;
+- verification succeeds;
+- artifacts exist;
+- requirements have been checked against implementation;
+- no blocking failure remains.
 
-          $projects = @(Get-ChildItem -Path . -Recurse -Filter *.csproj |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\'
-            })
+Otherwise report NOT READY with the exact evidence.
 
-          foreach ($project in $projects) {
-            Write-Host "BUILD: $($project.FullName)"
-            dotnet build $project.FullName --configuration Release --no-restore
-            if ($LASTEXITCODE -ne 0) {
-              throw "BUILD FAILED: $($project.FullName)"
-            }
-          }
-
-      - name: Test
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $tests = @(Get-ChildItem -Path . -Recurse -Filter *Tests.csproj |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\'
-            })
-
-          if ($tests.Count -eq 0) {
-            throw "NO TEST PROJECT FOUND. Product cannot be declared complete."
-          }
-
-          foreach ($test in $tests) {
-            Write-Host "TEST: $($test.FullName)"
-            dotnet test $test.FullName --configuration Release --no-restore
-            if ($LASTEXITCODE -ne 0) {
-              throw "TEST FAILED: $($test.FullName)"
-            }
-          }
-
-      - name: Final verification
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          New-Item -ItemType Directory -Force "artifacts" | Out-Null
-
-          Get-ChildItem -Path . -Recurse -File |
-            Where-Object {
-              $_.FullName -notmatch '\\.git\\|\\bin\\|\\obj\\|\\artifacts\\'
-            } |
-            Select-Object FullName, Length |
-            Out-File "artifacts/file-inventory.txt"
-
-          "BUILD AND TEST VERIFICATION PASSED" |
-            Set-Content "artifacts/verification.txt"
-
-      - name: Upload evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: KHALED-evidence
-          path: artifacts
-          if-no-files-found: ignore
+Begin immediately.

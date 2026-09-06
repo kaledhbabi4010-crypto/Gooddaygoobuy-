@@ -1,9 +1,25 @@
 KHALED-MASTER-PLAN.md
         ↓
-الخطة والمواصفات الكاملة
+     build.yml
         ↓
-.github/workflows/build.yml
+Bootstrap حقيقي
         ↓
-المحرك الذي ينفذ الخطة فعليًا
+إنشاء المشروع
         ↓
-Build → Test → Verify → Repair → Rebuild
+إنشاء الكود
+        ↓
+Build
+        ↓
+Test
+        ↓
+اكتشاف الخطأ الحقيقي
+        ↓
+Repair آمن ومحدود
+        ↓
+Build + Test مرة أخرى
+        ↓
+Verification
+        ↓
+Publish
+        ↓
+Evidence + SHA256

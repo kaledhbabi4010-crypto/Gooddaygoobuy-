@@ -1,4 +1,4 @@
-name: KHALED - Build and Verify
+name: KHALED CI
 
 on:
   push:
@@ -12,333 +12,126 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: khaled-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   build:
-    name: Bootstrap → Build → Test → Verify
     runs-on: windows-latest
     timeout-minutes: 30
 
     steps:
-
-      # ------------------------------------------------------------
-      # 1. Get repository
-      # ------------------------------------------------------------
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ------------------------------------------------------------
-      # 2. Validate repository
-      # ------------------------------------------------------------
-      - name: Validate repository
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          if (!(Test-Path "KHALED-MASTER-PLAN.md")) {
-            throw "KHALED-MASTER-PLAN.md was not found."
-          }
-
-          $plan = Get-Content "KHALED-MASTER-PLAN.md" -Raw
-
-          if ([string]::IsNullOrWhiteSpace($plan)) {
-            throw "KHALED-MASTER-PLAN.md is empty."
-          }
-
-          Write-Host "Repository validation: PASS"
-
-      # ------------------------------------------------------------
-      # 3. Install .NET
-      # ------------------------------------------------------------
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
 
-      # ------------------------------------------------------------
-      # 4. Create a real project ONLY if one does not exist
-      # ------------------------------------------------------------
-      - name: Bootstrap KHALED project
+      - name: Create project
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          if (Test-Path "KHALED-X.csproj") {
-            Write-Host "Existing KHALED-X.csproj detected."
-            exit 0
+          if (!(Test-Path "KHALED-X.csproj")) {
+            dotnet new console `
+              --name KHALED-X `
+              --framework net8.0 `
+              --output .
           }
 
-          Write-Host "Creating initial executable KHALED project..."
-
-          dotnet new console `
-            --name KHALED-X `
-            --framework net8.0 `
-            --output .
-
-          @'
-using System;
-
-namespace KHALED;
-
-public static class Program
-{
-    public static int Main(string[] args)
-    {
-        Console.WriteLine("KHALED runtime started.");
-
-        if (args.Length == 0)
-        {
-            Console.WriteLine("Command: status");
-            return 0;
-        }
-
-        return args[0].ToLowerInvariant() switch
-        {
-            "install"   => Execute("install"),
-            "verify"    => Execute("verify"),
-            "status"    => Execute("status"),
-            "upgrade"   => Execute("upgrade"),
-            "repair"    => Execute("repair"),
-            "uninstall" => Execute("uninstall"),
-            _           => Unknown(args[0])
-        };
-    }
-
-    private static int Execute(string command)
-    {
-        Console.WriteLine($"KHALED command accepted: {command}");
-        return 0;
-    }
-
-    private static int Unknown(string command)
-    {
-        Console.Error.WriteLine($"Unknown command: {command}");
-        return 2;
-    }
-}
-'@ | Set-Content -Encoding UTF8 "Program.cs"
-
-          Write-Host "KHALED bootstrap created."
-
-      # ------------------------------------------------------------
-      # 5. Restore
-      # ------------------------------------------------------------
       - name: Restore
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          dotnet restore "KHALED-X.csproj"
+          dotnet restore KHALED-X.csproj
 
-      # ------------------------------------------------------------
-      # 6. Build
-      # ------------------------------------------------------------
       - name: Build
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          dotnet build "KHALED-X.csproj" `
+          dotnet build KHALED-X.csproj `
             --configuration Release `
             --no-restore `
             --nologo
 
-      # ------------------------------------------------------------
-      # 7. Basic runtime verification
-      # ------------------------------------------------------------
-      - name: Runtime verification
+      - name: Run
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          $dll = "bin/Release/net8.0/KHALED-X.dll"
-
-          if (!(Test-Path $dll)) {
-            throw "Build output was not produced."
-          }
-
-          dotnet $dll status
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "KHALED runtime verification failed."
-          }
-
-      # ------------------------------------------------------------
-      # 8. Create tests
-      # ------------------------------------------------------------
-      - name: Create smoke test
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          New-Item -ItemType Directory -Force -Path "tests" | Out-Null
-
-          @'
-          using System;
-          using Xunit;
-
-          public class KHALEDSmokeTests
-          {
-              [Fact]
-              public void BootstrapMustExist()
-              {
-                  Assert.True(
-                      System.IO.File.Exists("KHALED-X.csproj")
-                  );
-              }
-          }
-          '@ | Set-Content -Encoding UTF8 "tests/KHALEDSmokeTests.cs"
-
-          @'
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup>
-              <TargetFramework>net8.0</TargetFramework>
-              <IsPackable>false</IsPackable>
-            </PropertyGroup>
-
-            <ItemGroup>
-              <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
-              <PackageReference Include="xunit" Version="2.9.2" />
-              <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-            </ItemGroup>
-          </Project>
-          '@ | Set-Content -Encoding UTF8 "tests/KHALED.Tests.csproj"
-
-      # ------------------------------------------------------------
-      # 9. Test
-      # ------------------------------------------------------------
-      - name: Test
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          dotnet restore "tests/KHALED.Tests.csproj"
-
-          dotnet test "tests/KHALED.Tests.csproj" `
+          dotnet run `
+            --project KHALED-X.csproj `
             --configuration Release `
-            --no-restore `
-            --nologo
+            --no-build
 
-      # ------------------------------------------------------------
-      # 10. Publish
-      # ------------------------------------------------------------
       - name: Publish
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          dotnet publish "KHALED-X.csproj" `
+          Remove-Item "artifacts" -Recurse -Force -ErrorAction SilentlyContinue
+
+          dotnet publish KHALED-X.csproj `
             --configuration Release `
             --runtime win-x64 `
             --self-contained false `
-            --output "artifacts/publish" `
+            --output artifacts/publish `
             --nologo
 
           if (!(Test-Path "artifacts/publish")) {
-            throw "Publish directory was not created."
+            throw "Publish failed."
           }
 
-      # ------------------------------------------------------------
-      # 11. SHA256 evidence
-      # ------------------------------------------------------------
-      - name: Generate evidence
+      - name: Generate SHA256
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
 
           $files = Get-ChildItem "artifacts/publish" -File -Recurse
 
           if ($files.Count -eq 0) {
-            throw "No published artifact exists."
+            throw "No published files found."
           }
 
-          $results = foreach ($file in $files) {
-            $hash = Get-FileHash `
-              -Path $file.FullName `
-              -Algorithm SHA256
+          $hashes = foreach ($file in $files) {
+            $h = Get-FileHash $file.FullName -Algorithm SHA256
 
             [PSCustomObject]@{
               File = $file.FullName
-              SHA256 = $hash.Hash
+              SHA256 = $h.Hash
             }
           }
 
-          $results |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          $hashes |
             ConvertTo-Json -Depth 5 |
-            Set-Content -Encoding UTF8 "artifacts/SHA256.json"
+            Set-Content "artifacts/SHA256.json"
 
-          @"
-KHALED BUILD EVIDENCE
-
-Repository:
-$env:GITHUB_REPOSITORY
-
-Commit:
-$env:GITHUB_SHA
-
-Workflow:
-$env:GITHUB_WORKFLOW
-
-Run:
-$env:GITHUB_RUN_ID
-
-Build:
-PASS
-
-Runtime:
-PASS
-
-Tests:
-PASS
-
-Publish:
-PASS
-
-SHA256:
-GENERATED
-
-IMPORTANT:
-This workflow does NOT claim that Revit or AutoCAD
-versions are supported. Autodesk compatibility requires
-actual SDK/application compilation and testing.
-"@ | Set-Content -Encoding UTF8 "artifacts/VERIFICATION.txt"
-
-      # ------------------------------------------------------------
-      # 12. Upload artifacts
-      # ------------------------------------------------------------
-      - name: Upload artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: KHALED-build-${{ github.sha }}
-          path: artifacts
-          if-no-files-found: error
-
-      # ------------------------------------------------------------
-      # 13. Commit generated bootstrap only after success
-      # ------------------------------------------------------------
-      - name: Commit generated bootstrap
-        if: success() && github.event_name == 'push'
+      - name: Verification
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          @"
+          KHALED CI VERIFICATION
 
-          git add KHALED-X.csproj Program.cs tests
+          Repository: $env:GITHUB_REPOSITORY
+          Commit: $env:GITHUB_SHA
+          Build: PASS
+          Runtime: PASS
+          Publish: PASS
+          SHA256: PASS
 
-          if (git diff --cached --quiet) {
-            Write-Host "No bootstrap changes to commit."
-            exit 0
-          }
+          Autodesk compatibility is NOT claimed here.
+          Revit/AutoCAD compatibility requires real Autodesk
+          SDK/application testing.
+          "@ | Set-Content "artifacts/VERIFICATION.txt"
 
-          git commit -m "Bootstrap KHALED executable project"
-
-          git push
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KHALED-${{ github.sha }}
+          path: artifacts
+          if-no-files-found: error

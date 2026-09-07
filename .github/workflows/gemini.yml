@@ -1,11 +1,15 @@
-name: Gemini Dispatch
+name: Gemini AI Agent
 
 on:
-  issues:
-    types: [opened]
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task for Gemini"
+        required: true
+        type: string
+
   issue_comment:
     types: [created]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,61 +21,86 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (
-        github.event_name == 'issues' &&
-        contains(github.event.issue.body, '@gemini-cli')
-      ) ||
-      (
         github.event_name == 'issue_comment' &&
         contains(github.event.comment.body, '@gemini-cli')
       )
 
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Run Gemini CLI
         uses: google-github-actions/run-gemini-cli@v0
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
             You are the lead autonomous engineer for this repository.
 
-            Read GEMINI.md and KHALED-MASTER-PLAN.md first.
+            FIRST:
+            - Read GEMINI.md completely.
+            - Read KHALED-MASTER-PLAN.md completely.
+            - Inspect the entire repository before changing important code.
+            - Understand the existing architecture and tests.
 
-            Work carefully and incrementally.
+            MISSION:
+            Continue implementing the KHALED / REVO AI project toward the
+            requirements defined in KHALED-MASTER-PLAN.md.
 
-            Your mission:
-            1. Inspect the repository.
-            2. Identify the highest-priority incomplete functionality.
-            3. Implement it.
-            4. Build the project.
-            5. Run all available tests.
+            EXECUTION LOOP:
+            1. Analyze.
+            2. Plan.
+            3. Implement.
+            4. Build.
+            5. Test.
             6. Diagnose failures.
-            7. Repair failures.
-            8. Rebuild and retest.
-            9. Verify the final state.
-            10. Never claim success without real evidence.
+            7. Repair.
+            8. Build again.
+            9. Test again.
+            10. Verify.
+            11. Repeat until no useful automated work remains.
 
-            STRICT RULES:
-            - Never fabricate test results.
-            - Never fabricate Autodesk/Revit/AutoCAD verification.
-            - Never convert NOT_VERIFIED to VERIFIED without evidence.
-            - Preserve working functionality.
-            - Do not remove functionality merely to make tests pass.
+            QUALITY RULES:
+            - Never fabricate results.
+            - Never claim a test passed unless it actually passed.
+            - Never claim Autodesk/Revit/AutoCAD functionality is verified
+              unless real evidence exists.
+            - NEVER convert NOT_VERIFIED into VERIFIED without evidence.
+            - Preserve existing working functionality.
+            - Do not weaken tests just to obtain PASS.
+            - Do not delete required functionality to make builds pass.
+            - Prefer small, verifiable changes.
+            - Use existing repository scripts whenever possible.
             - Minimize unnecessary model calls.
-            - Use repository scripts whenever available.
-            - Continue fixing failures until successful or genuinely blocked.
-            - Record remaining blockers honestly.
+            - Reuse repository context whenever possible.
+            - Fix errors instead of hiding them.
+            - Keep the project buildable after changes.
 
-            At the end, provide:
+            SAFETY:
+            - Do not expose secrets.
+            - Do not print API keys.
+            - Do not commit credentials.
+            - Do not make destructive changes without necessity.
+
+            EVIDENCE:
+            Every claimed success must have actual evidence from commands,
+            tests, builds, or repository state.
+
+            FINAL REPORT:
+            Report only:
             - files changed
-            - build result
-            - test result
-            - verification result
+            - build status
+            - test status
+            - verification status
+            - real evidence
             - remaining blockers
-            - evidence for every claimed success
+
+            USER TASK:
+            ${{ github.event.inputs.task || github.event.comment.body }}

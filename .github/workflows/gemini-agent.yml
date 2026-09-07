@@ -19,34 +19,64 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Checkout
+
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Gemini
+      - name: Run Gemini AI Agent
         uses: google-github-actions/run-gemini-cli@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_CLI_TRUST_WORKSPACE: "true"
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          prompt: |
-            Read GEMINI.md and KHALED-MASTER-PLAN.md first.
 
-            User task:
+          prompt: |
+            You are the autonomous lead engineer for this repository.
+
+            FIRST:
+            1. Read GEMINI.md.
+            2. Read KHALED-MASTER-PLAN.md.
+            3. Inspect the complete repository.
+            4. Understand the existing architecture before changing code.
+
+            USER TASK:
             ${{ github.event.inputs.task }}
 
-            Work autonomously.
-            Inspect the repository.
-            Implement the requested task.
-            Build the project.
-            Run tests.
-            Diagnose and repair failures.
-            Build and test again.
+            EXECUTION:
+            - Implement the requested task.
+            - Preserve existing functionality.
+            - Use existing scripts whenever possible.
+            - Build the project.
+            - Run all available tests.
+            - Diagnose failures.
+            - Repair failures.
+            - Build again.
+            - Run tests again.
+            - Verify the final result.
+            - Commit and push legitimate changes when appropriate.
 
-            Never fabricate results.
-            Never claim success without real evidence.
-            Never claim Revit or AutoCAD verification
-            without a real Autodesk environment.
+            STRICT TRUTH RULES:
+            - Never fabricate results.
+            - Never claim a build passed without real evidence.
+            - Never claim tests passed without real evidence.
+            - Never claim Revit or AutoCAD verification without a real Autodesk environment.
+            - Never convert NOT_VERIFIED to VERIFIED without evidence.
+            - Never hide failures or blockers.
+            - Never delete functionality merely to make tests pass.
 
-            Report exactly what was changed,
-            build results, test results,
-            verification results, and blockers.
+            EFFICIENCY:
+            - Work autonomously.
+            - Minimize unnecessary model calls.
+            - Prefer deterministic repository scripts.
+            - Fix the root cause rather than applying superficial workarounds.
+
+            FINAL REPORT:
+            Report:
+            1. Files changed.
+            2. Work completed.
+            3. Build result.
+            4. Test result.
+            5. Verification result.
+            6. Remaining blockers.
+            7. Real evidence supporting each claimed success.

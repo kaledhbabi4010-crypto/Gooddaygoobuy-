@@ -1,57 +1,36 @@
-name: Gemini AI Agent
+name: Gemini Self Repair
 
 on:
   workflow_dispatch:
     inputs:
       task:
-        description: "Task for Gemini"
+        description: "Self-repair Gemini Agent infrastructure"
         required: true
         type: string
 
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
-
-concurrency:
-  group: gemini-agent
-  cancel-in-progress: false
+  actions: write
 
 jobs:
-  gemini:
+  self-repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Configure Git
+      - name: Git identity
         run: |
-          git config user.name "Gemini AI Agent"
-          git config user.email "gemini-agent@users.noreply.github.com"
+          git config user.name "Gemini Self Repair"
+          git config user.email "gemini-self-repair@users.noreply.github.com"
 
-      - name: Preflight
-        shell: bash
-        run: |
-          set -e
-          echo "=== REPOSITORY ==="
-          git remote -v
-          git branch --show-current
-          git rev-parse HEAD
-          echo "=== STATUS ==="
-          git status --short
-          echo "=== REQUIRED FILES ==="
-          test -f GEMINI.md
-          test -f KHALED-MASTER-PLAN.md
-          test -f .github/workflows/gemini-agent.yml
-          echo "PREFLIGHT_OK"
-
-      - name: Gemini AI Agent
+      - name: Gemini Self Repair
         uses: google-github-actions/run-gemini-cli@v0
-        timeout-minutes: 45
+        timeout-minutes: 20
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_CLI_TRUST_WORKSPACE: "true"
@@ -59,102 +38,72 @@ jobs:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           gemini_cli_version: "0.58.0"
           prompt: |
-            You are the autonomous repair engineer for this repository.
+            SELF-REPAIR MODE ONLY.
 
-            IMPORTANT:
-            Your FIRST and ONLY objective in this run is to repair and
-            stabilize the Gemini AI Agent infrastructure itself.
+            Your only mission is to repair the Gemini GitHub Actions
+            infrastructure of this repository.
 
-            DO NOT develop, redesign, or extend KHALED or REVO AI yet.
+            DO NOT develop KHALED.
+            DO NOT develop REVO AI.
+            DO NOT modify application functionality.
 
-            Read completely:
+            First inspect:
+            - .github/workflows/
+            - .github/workflows/gemini-agent.yml
             - GEMINI.md
             - KHALED-MASTER-PLAN.md
-            - .github/workflows/gemini-agent.yml
-            - all other .github/workflows/*.yml files
+            - git history
+            - current git status
 
-            Inspect the Git history and current repository state.
+            The current Gemini workflow may be corrupted or contain the
+            wrong file content.
 
-            Determine whether the Gemini workflow can reliably:
-            - start
-            - trust the workspace
-            - authenticate
-            - access the repository
-            - modify files
-            - commit changes when necessary
-            - run validation
-            - report evidence
+            Diagnose the actual problem.
 
-            Repair ONLY Gemini-agent infrastructure and workflow problems.
+            Repair the Gemini workflow itself.
 
-            Check for:
-            - invalid YAML
-            - duplicate/conflicting Gemini workflows
-            - incorrect Gemini CLI configuration
-            - trust/workspace configuration
-            - API-key wiring
-            - GitHub permissions
+            Ensure:
+            - valid YAML
+            - correct GitHub Actions syntax
+            - correct Gemini CLI action
+            - trusted workspace configuration
+            - GEMINI_API_KEY wiring
+            - correct permissions
+            - deterministic Gemini CLI version
             - checkout configuration
             - Git configuration
-            - unstable Gemini CLI version selection
-            - missing timeouts
-            - unsafe or contradictory workflow instructions
-            - incorrect paths
-            - malformed prompts
-            - configuration that can cause hangs or immediate failures
+            - safe timeout
+            - no duplicated/conflicting Gemini workflow
+            - correct separation between GEMINI.md and workflow files
 
-            Preserve application functionality.
+            Preserve GEMINI.md as a separate instruction document.
 
-            Do NOT modify KHALED/REVO AI application code unless absolutely
-            required to repair the Gemini infrastructure.
-
-            After every meaningful infrastructure change:
+            After repairing:
             1. Validate the YAML.
-            2. Inspect the resulting workflow.
-            3. Run available infrastructure checks.
-            4. Diagnose failures.
-            5. Repair failures.
-            6. Re-run validation.
+            2. Inspect the final workflow.
+            3. Inspect git diff.
+            4. Check for accidental corruption.
+            5. Check for secrets.
+            6. Commit the repair if the repair is valid.
 
-            Never fabricate results.
+            Do not modify application source code.
 
-            Never claim VERIFIED unless there is actual evidence.
+            Do not claim VERIFIED unless the repair was actually validated.
 
-            Evidence states allowed:
-            VERIFIED
-            FAILED
-            NOT_VERIFIED
-            NOT_APPLICABLE
-            BLOCKED
+            Final report:
+            ROOT CAUSE
+            FILES CHANGED
+            REPAIR
+            VALIDATION
+            REMAINING BLOCKERS
+            STATUS
 
-            Do not convert NOT_VERIFIED to VERIFIED without evidence.
-
-            If another Gemini workflow is obsolete or conflicts with the
-            intended agent, identify it clearly and remove/disable it only
-            if doing so is necessary and safe.
-
-            Do not start project development after repairing the agent.
-
-            At the end provide a concise report containing:
-            - root cause
-            - files changed
-            - fixes made
-            - validation performed
-            - build/test results if applicable
-            - remaining blockers
-            - evidence
-            - final status
-
-            User task:
-            ${{ inputs.task }}
-
-      - name: Final repository status
+      - name: Final validation
         if: always()
-        shell: bash
         run: |
-          echo "=== FINAL STATUS ==="
+          echo "=== STATUS ==="
           git status --short
-          echo "=== CURRENT COMMIT ==="
+          echo "=== WORKFLOW ==="
+          sed -n '1,220p' .github/workflows/gemini-agent.yml
+          echo "=== COMMIT ==="
           git rev-parse HEAD
-          echo "=== RECENT COMMITS ==="
-          git log -5 --oneline

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "اكتب مهمة Gemini هنا"
+        description: "Gemini Task"
         required: true
         type: string
 
@@ -33,65 +33,59 @@ jobs:
       )
 
     runs-on: ubuntu-latest
+
     timeout-minutes: 60
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Gemini AI Agent
+      - name: Run Gemini
         uses: google-github-actions/run-gemini-cli@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
-            You are the lead autonomous engineer for this repository.
+            You are the autonomous AI engineer for this repository.
 
-            FIRST:
-            - Read GEMINI.md.
-            - Read KHALED-MASTER-PLAN.md.
-            - Inspect the entire repository before making important changes.
+            Read these files first:
+            - GEMINI.md
+            - KHALED-MASTER-PLAN.md
 
             USER TASK:
             ${{ github.event.inputs.task || github.event.comment.body || github.event.issue.body }}
 
-            OBJECTIVE:
-            Execute the user's task completely and autonomously.
+            Execute the task completely.
 
-            WORKFLOW:
+            WORK:
             1. Inspect the repository.
             2. Understand the existing architecture.
-            3. Identify the highest-priority work required.
-            4. Implement the required changes.
-            5. Build the project.
-            6. Run all available tests.
-            7. Diagnose every failure.
-            8. Repair failures.
-            9. Rebuild.
-            10. Retest.
-            11. Verify the final state.
-            12. Preserve existing working functionality.
-            13. Commit and push legitimate changes when appropriate.
+            3. Implement the required changes.
+            4. Build the project.
+            5. Run tests.
+            6. Diagnose failures.
+            7. Repair failures.
+            8. Build again.
+            9. Test again.
+            10. Verify the result.
 
-            STRICT TRUTH RULES:
-            - Never fabricate results.
-            - Never claim a build passed unless it actually passed.
-            - Never claim tests passed unless they actually passed.
-            - Never claim Autodesk/Revit/AutoCAD verification without a real
-              Autodesk environment and real evidence.
-            - Never convert NOT_VERIFIED into VERIFIED without evidence.
-            - Never hide failures or blockers.
-            - Never remove functionality just to make tests pass.
-            - Use repository scripts whenever available.
-            - Minimize unnecessary model calls.
-            - Work incrementally and safely.
+            IMPORTANT:
+            Never fabricate results.
+            Never claim success without real evidence.
+            Never claim Autodesk, Revit, or AutoCAD verification
+            without a real Autodesk environment.
+            Never change NOT_VERIFIED to VERIFIED without evidence.
+            Never hide failures.
+            Preserve existing functionality.
 
-            FINAL REPORT:
-            - Task completed
-            - Files changed
+            Use the existing repository scripts whenever possible.
+
+            At the end report:
+            - What was changed
             - Build result
             - Test result
             - Verification result
             - Remaining blockers
-            - Evidence for every claimed success
+            - Evidence

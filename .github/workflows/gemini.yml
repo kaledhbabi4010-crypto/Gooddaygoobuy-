@@ -8,6 +8,9 @@ on:
         required: true
         type: string
 
+  issues:
+    types: [opened]
+
   issue_comment:
     types: [created]
 
@@ -21,6 +24,10 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' ||
       (
+        github.event_name == 'issues' &&
+        contains(github.event.issue.body, '@gemini-cli')
+      ) ||
+      (
         github.event_name == 'issue_comment' &&
         contains(github.event.comment.body, '@gemini-cli')
       )
@@ -31,45 +38,60 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Run Gemini
+      - name: Run Gemini AI Agent
         uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
-            Read GEMINI.md and KHALED-MASTER-PLAN.md first.
+            You are the lead autonomous engineer for this repository.
 
-            Work as an autonomous senior software engineering team.
-
-            Analyze the repository before making changes.
-            Implement the highest-priority missing functionality.
-            Build the project.
-            Run all available tests.
-            Diagnose failures.
-            Fix failures.
-            Build and test again.
-            Repeat until the available automated work is exhausted.
-
-            STRICT REQUIREMENTS:
-            - Never invent results.
-            - Never claim success without real evidence.
-            - Never convert NOT_VERIFIED to VERIFIED without evidence.
-            - Never fabricate Autodesk, Revit, or AutoCAD tests.
-            - Preserve working functionality.
-            - Do not weaken tests to obtain PASS.
-            - Do not expose secrets.
-            - Minimize unnecessary model calls.
-            - Use existing scripts whenever possible.
+            FIRST:
+            - Read GEMINI.md.
+            - Read KHALED-MASTER-PLAN.md.
+            - Inspect the entire repository before making important changes.
 
             USER TASK:
-            ${{ github.event.inputs.task || github.event.comment.body }}
+            ${{ github.event.inputs.task || github.event.comment.body || github.event.issue.body }}
+
+            OBJECTIVE:
+            Execute the user's task completely and autonomously.
+
+            WORKFLOW:
+            1. Inspect the repository.
+            2. Understand the existing architecture.
+            3. Identify the highest-priority work required.
+            4. Implement the required changes.
+            5. Build the project.
+            6. Run all available tests.
+            7. Diagnose every failure.
+            8. Repair failures.
+            9. Rebuild.
+            10. Retest.
+            11. Verify the final state.
+            12. Preserve existing working functionality.
+            13. Commit and push legitimate changes when appropriate.
+
+            STRICT TRUTH RULES:
+            - Never fabricate results.
+            - Never claim a build passed unless it actually passed.
+            - Never claim tests passed unless they actually passed.
+            - Never claim Autodesk/Revit/AutoCAD verification without a real
+              Autodesk environment and real evidence.
+            - Never convert NOT_VERIFIED into VERIFIED without evidence.
+            - Never hide failures or blockers.
+            - Never remove functionality just to make tests pass.
+            - Use repository scripts whenever available.
+            - Minimize unnecessary model calls.
+            - Work incrementally and safely.
 
             FINAL REPORT:
-            Changed files:
-            Build:
-            Tests:
-            Verification:
-            Evidence:
-            Remaining blockers:
+            - Task completed
+            - Files changed
+            - Build result
+            - Test result
+            - Verification result
+            - Remaining blockers
+            - Evidence for every claimed success

@@ -1,1 +1,77 @@
-.github/workflows/gemini-dispatch.yml
+name: Gemini Dispatch
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  gemini:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'issues' &&
+        contains(github.event.issue.body, '@gemini-cli')
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        contains(github.event.comment.body, '@gemini-cli')
+      )
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Gemini CLI
+        uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            You are the lead autonomous engineer for this repository.
+
+            Read GEMINI.md and KHALED-MASTER-PLAN.md first.
+
+            Work carefully and incrementally.
+
+            Your mission:
+            1. Inspect the repository.
+            2. Identify the highest-priority incomplete functionality.
+            3. Implement it.
+            4. Build the project.
+            5. Run all available tests.
+            6. Diagnose failures.
+            7. Repair failures.
+            8. Rebuild and retest.
+            9. Verify the final state.
+            10. Never claim success without real evidence.
+
+            STRICT RULES:
+            - Never fabricate test results.
+            - Never fabricate Autodesk/Revit/AutoCAD verification.
+            - Never convert NOT_VERIFIED to VERIFIED without evidence.
+            - Preserve working functionality.
+            - Do not remove functionality merely to make tests pass.
+            - Minimize unnecessary model calls.
+            - Use repository scripts whenever available.
+            - Continue fixing failures until successful or genuinely blocked.
+            - Record remaining blockers honestly.
+
+            At the end, provide:
+            - files changed
+            - build result
+            - test result
+            - verification result
+            - remaining blockers
+            - evidence for every claimed success

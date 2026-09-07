@@ -1,0 +1,52 @@
+name: Gemini AI Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task for Gemini"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  gemini:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Gemini
+        uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            Read GEMINI.md and KHALED-MASTER-PLAN.md first.
+
+            User task:
+            ${{ github.event.inputs.task }}
+
+            Work autonomously.
+            Inspect the repository.
+            Implement the requested task.
+            Build the project.
+            Run tests.
+            Diagnose and repair failures.
+            Build and test again.
+
+            Never fabricate results.
+            Never claim success without real evidence.
+            Never claim Revit or AutoCAD verification
+            without a real Autodesk environment.
+
+            Report exactly what was changed,
+            build results, test results,
+            verification results, and blockers.

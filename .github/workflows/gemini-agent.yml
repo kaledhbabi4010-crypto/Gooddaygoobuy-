@@ -2,18 +2,13 @@ name: Gemini Self Repair
 
 on:
   workflow_dispatch:
-    inputs:
-      task:
-        description: "Self-repair Gemini Agent infrastructure"
-        required: true
-        type: string
 
 permissions:
   contents: write
   actions: write
 
 jobs:
-  self-repair:
+  repair:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -38,57 +33,47 @@ jobs:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           gemini_cli_version: "0.58.0"
           prompt: |
-            SELF-REPAIR MODE ONLY.
+            SELF-REPAIR ONLY.
 
-            Your only mission is to repair the Gemini GitHub Actions
-            infrastructure of this repository.
+            Do not develop KHALED.
+            Do not develop REVO AI.
+            Do not modify application functionality.
 
-            DO NOT develop KHALED.
-            DO NOT develop REVO AI.
-            DO NOT modify application functionality.
+            Inspect the entire .github/workflows directory,
+            GEMINI.md, KHALED-MASTER-PLAN.md and git history.
 
-            First inspect:
-            - .github/workflows/
-            - .github/workflows/gemini-agent.yml
-            - GEMINI.md
-            - KHALED-MASTER-PLAN.md
-            - git history
-            - current git status
+            Your only mission is to repair the Gemini agent infrastructure.
 
-            The current Gemini workflow may be corrupted or contain the
-            wrong file content.
+            Find and repair:
+            - invalid YAML
+            - duplicate Gemini workflows
+            - conflicting Gemini workflows
+            - incorrect Gemini CLI configuration
+            - missing trusted-workspace configuration
+            - incorrect API key wiring
+            - incorrect GitHub permissions
+            - checkout problems
+            - Git configuration problems
+            - incorrect workflow paths
+            - malformed prompts
+            - unsafe configuration
+            - accidental corruption of workflow files
 
-            Diagnose the actual problem.
+            Keep GEMINI.md separate from YAML workflow files.
 
-            Repair the Gemini workflow itself.
+            Validate the repaired YAML.
+            Inspect git diff.
+            Check for accidental file corruption.
+            Check for exposed secrets.
 
-            Ensure:
-            - valid YAML
-            - correct GitHub Actions syntax
-            - correct Gemini CLI action
-            - trusted workspace configuration
-            - GEMINI_API_KEY wiring
-            - correct permissions
-            - deterministic Gemini CLI version
-            - checkout configuration
-            - Git configuration
-            - safe timeout
-            - no duplicated/conflicting Gemini workflow
-            - correct separation between GEMINI.md and workflow files
-
-            Preserve GEMINI.md as a separate instruction document.
-
-            After repairing:
-            1. Validate the YAML.
-            2. Inspect the final workflow.
-            3. Inspect git diff.
-            4. Check for accidental corruption.
-            5. Check for secrets.
-            6. Commit the repair if the repair is valid.
+            Remove or disable obsolete/conflicting Gemini workflows
+            only when necessary for a clean single-agent architecture.
 
             Do not modify application source code.
 
-            Do not claim VERIFIED unless the repair was actually validated.
+            Do not claim VERIFIED without real evidence.
+
+            If the repair is valid, commit the repair.
 
             Final report:
             ROOT CAUSE
@@ -98,12 +83,12 @@ jobs:
             REMAINING BLOCKERS
             STATUS
 
-      - name: Final validation
+      - name: Final verification
         if: always()
         run: |
-          echo "=== STATUS ==="
+          echo "=== WORKFLOW FILES ==="
+          find .github/workflows -maxdepth 1 -type f -print
+          echo "=== GIT STATUS ==="
           git status --short
-          echo "=== WORKFLOW ==="
-          sed -n '1,220p' .github/workflows/gemini-agent.yml
-          echo "=== COMMIT ==="
+          echo "=== CURRENT COMMIT ==="
           git rev-parse HEAD

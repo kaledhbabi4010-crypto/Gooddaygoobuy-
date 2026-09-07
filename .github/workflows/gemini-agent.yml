@@ -1,11 +1,10 @@
-name: Gemini Self Repair
-
-on:
-  workflow_dispatch:
-
 permissions:
   contents: write
   actions: write
+
+concurrency:
+  group: gemini-self-repair
+  cancel-in-progress: false
 
 jobs:
   repair:
@@ -17,6 +16,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_WORKFLOW_PAT }}
 
       - name: Git identity
         run: |
@@ -27,7 +27,7 @@ jobs:
         uses: google-github-actions/run-gemini-cli@v0
         timeout-minutes: 20
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_WORKFLOW_PAT }}
           GEMINI_CLI_TRUST_WORKSPACE: "true"
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
@@ -35,60 +35,19 @@ jobs:
           prompt: |
             SELF-REPAIR ONLY.
 
-            Do not develop KHALED.
-            Do not develop REVO AI.
-            Do not modify application functionality.
+            Repair and stabilize the Gemini GitHub Actions infrastructure.
 
-            Inspect the entire .github/workflows directory,
-            GEMINI.md, KHALED-MASTER-PLAN.md and git history.
+            Inspect all .github/workflows files, GEMINI.md,
+            KHALED-MASTER-PLAN.md and git history.
 
-            Your only mission is to repair the Gemini agent infrastructure.
+            You may repair workflow files and commit/push the repair.
 
-            Find and repair:
-            - invalid YAML
-            - duplicate Gemini workflows
-            - conflicting Gemini workflows
-            - incorrect Gemini CLI configuration
-            - missing trusted-workspace configuration
-            - incorrect API key wiring
-            - incorrect GitHub permissions
-            - checkout problems
-            - Git configuration problems
-            - incorrect workflow paths
-            - malformed prompts
-            - unsafe configuration
-            - accidental corruption of workflow files
+            Do NOT develop KHALED or REVO AI.
+            Do NOT modify application functionality.
 
-            Keep GEMINI.md separate from YAML workflow files.
+            Validate YAML and inspect git diff before committing.
 
-            Validate the repaired YAML.
-            Inspect git diff.
-            Check for accidental file corruption.
-            Check for exposed secrets.
+            Never fabricate verification.
 
-            Remove or disable obsolete/conflicting Gemini workflows
-            only when necessary for a clean single-agent architecture.
-
-            Do not modify application source code.
-
-            Do not claim VERIFIED without real evidence.
-
-            If the repair is valid, commit the repair.
-
-            Final report:
-            ROOT CAUSE
-            FILES CHANGED
-            REPAIR
-            VALIDATION
-            REMAINING BLOCKERS
-            STATUS
-
-      - name: Final verification
-        if: always()
-        run: |
-          echo "=== WORKFLOW FILES ==="
-          find .github/workflows -maxdepth 1 -type f -print
-          echo "=== GIT STATUS ==="
-          git status --short
-          echo "=== CURRENT COMMIT ==="
-          git rev-parse HEAD
+            Final status must be:
+            VERIFIED / FAILED / NOT_VERIFIED / BLOCKED.

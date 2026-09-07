@@ -46,7 +46,7 @@ jobs:
             EXECUTION:
             - Implement the requested task.
             - Preserve existing functionality.
-            - Use existing scripts whenever possible.
+            - Use existing repository scripts whenever possible.
             - Build the project.
             - Run all available tests.
             - Diagnose failures.
@@ -69,7 +69,7 @@ jobs:
             - Work autonomously.
             - Minimize unnecessary model calls.
             - Prefer deterministic repository scripts.
-            - Fix the root cause rather than applying superficial workarounds.
+            - Fix root causes instead of superficial workarounds.
 
             FINAL REPORT:
             Report:

@@ -1,0 +1,6 @@
+{
+  "runtime": { "dotnet": "8.0.x" },
+  "os": ["ubuntu-latest", "windows-latest"],
+  "optional": { "ai": false, "browser": false, "autodesk": "NOT_VERIFIED" },
+  "ci": { "maxBuildMinutes": 10, "cacheNuGet": true }
+}

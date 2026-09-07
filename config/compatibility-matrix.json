@@ -1,0 +1,10 @@
+{
+  "matrix": [
+    { "component": "KHALED Core", "target": "net8.0", "status": "VERIFIED" },
+    { "component": "KHALED Tests", "target": "net8.0", "status": "VERIFIED" },
+    { "component": "AI Layer", "target": "optional", "status": "DISABLED" },
+    { "component": "Browser Engine", "target": "optional", "status": "DISABLED" },
+    { "component": "Revit Adapter", "target": "windows", "status": "NOT_VERIFIED" },
+    { "component": "AutoCAD Adapter", "target": "windows", "status": "NOT_VERIFIED" }
+  ]
+}

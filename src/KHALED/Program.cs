@@ -1,5 +1,7 @@
 using Khaled.Core;
 
-var report = PlanReader.Describe();
-Console.WriteLine(report);
-return 0;
+var root = Environment.GetEnvironmentVariable("KHALED_ROOT") ?? Directory.GetCurrentDirectory();
+var lifecycle = new Lifecycle(root);
+var result = CommandRouter.Route(lifecycle, args);
+Console.WriteLine(SecretScanner.Redact(result.Message));
+return result.ExitCode;

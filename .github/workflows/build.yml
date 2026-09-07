@@ -8,39 +8,62 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: khaled-${{ github.ref }}
+  group: khaled-build-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-  DOTNET_NOLOGO: "true"
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
-  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
 
 jobs:
   build:
-    name: Build & Test
+    name: Build, Test, Verify
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: '8.0.x'
+          cache: true
+          cache-dependency-path: '**/*.csproj'
 
-      - name: Cache NuGet
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
-          restore-keys: nuget-${{ runner.os }}-
+      - name: Validate plan
+        run: bash scripts/validate-plan.sh
+
+      - name: Bootstrap
+        run: bash scripts/bootstrap.sh
+
+      - name: Discover environment
+        run: bash scripts/discover.sh
 
       - name: Restore
         run: dotnet restore KHALED.sln
 
       - name: Build
-        run: dotnet build KHALED.sln -c Release --no-restore
+        run: bash scripts/build.sh
 
       - name: Test
-        run: dotnet test KHALED.sln -c Release --no-build --verbosity minimal
+        run: bash scripts/test.sh
+
+      - name: Verify
+        run: bash scripts/verify.sh
+
+      - name: Diagnose
+        if: always()
+        run: bash scripts/diagnose.sh
+
+      - name: Evidence
+        if: always()
+        run: bash scripts/evidence.sh
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khaled-evidence
+          path: evidence/
+          retention-days: 7

@@ -1,0 +1,21 @@
+{
+  "name": "KHALED",
+  "version": "1.0.0",
+  "schemaVersion": 1,
+  "entrypoint": "src/KHALED/KHALED.csproj",
+  "solution": "KHALED.sln",
+  "commands": ["install", "verify", "status", "upgrade", "repair", "uninstall"],
+  "exitCodes": {
+    "0": "OK",
+    "1": "GENERAL_ERROR",
+    "2": "INVALID_ARGUMENTS",
+    "3": "PRECONDITION_FAILED",
+    "4": "BUILD_FAILED",
+    "5": "TEST_FAILED",
+    "6": "VERIFY_FAILED",
+    "7": "POLICY_BLOCKED",
+    "8": "REPAIR_EXHAUSTED",
+    "9": "NOT_VERIFIED"
+  },
+  "evidence": { "directory": "evidence", "hash": "sha256" }
+}

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "Task for Gemini"
+        description: "اكتب مهمة Gemini هنا"
         required: true
         type: string
 
@@ -34,73 +34,42 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run Gemini CLI
+      - name: Run Gemini
         uses: google-github-actions/run-gemini-cli@v0
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
-            You are the lead autonomous engineer for this repository.
+            Read GEMINI.md and KHALED-MASTER-PLAN.md first.
 
-            FIRST:
-            - Read GEMINI.md completely.
-            - Read KHALED-MASTER-PLAN.md completely.
-            - Inspect the entire repository before changing important code.
-            - Understand the existing architecture and tests.
+            Work as an autonomous senior software engineering team.
 
-            MISSION:
-            Continue implementing the KHALED / REVO AI project toward the
-            requirements defined in KHALED-MASTER-PLAN.md.
+            Analyze the repository before making changes.
+            Implement the highest-priority missing functionality.
+            Build the project.
+            Run all available tests.
+            Diagnose failures.
+            Fix failures.
+            Build and test again.
+            Repeat until the available automated work is exhausted.
 
-            EXECUTION LOOP:
-            1. Analyze.
-            2. Plan.
-            3. Implement.
-            4. Build.
-            5. Test.
-            6. Diagnose failures.
-            7. Repair.
-            8. Build again.
-            9. Test again.
-            10. Verify.
-            11. Repeat until no useful automated work remains.
-
-            QUALITY RULES:
-            - Never fabricate results.
-            - Never claim a test passed unless it actually passed.
-            - Never claim Autodesk/Revit/AutoCAD functionality is verified
-              unless real evidence exists.
-            - NEVER convert NOT_VERIFIED into VERIFIED without evidence.
-            - Preserve existing working functionality.
-            - Do not weaken tests just to obtain PASS.
-            - Do not delete required functionality to make builds pass.
-            - Prefer small, verifiable changes.
-            - Use existing repository scripts whenever possible.
-            - Minimize unnecessary model calls.
-            - Reuse repository context whenever possible.
-            - Fix errors instead of hiding them.
-            - Keep the project buildable after changes.
-
-            SAFETY:
+            STRICT REQUIREMENTS:
+            - Never invent results.
+            - Never claim success without real evidence.
+            - Never convert NOT_VERIFIED to VERIFIED without evidence.
+            - Never fabricate Autodesk, Revit, or AutoCAD tests.
+            - Preserve working functionality.
+            - Do not weaken tests to obtain PASS.
             - Do not expose secrets.
-            - Do not print API keys.
-            - Do not commit credentials.
-            - Do not make destructive changes without necessity.
-
-            EVIDENCE:
-            Every claimed success must have actual evidence from commands,
-            tests, builds, or repository state.
-
-            FINAL REPORT:
-            Report only:
-            - files changed
-            - build status
-            - test status
-            - verification status
-            - real evidence
-            - remaining blockers
+            - Minimize unnecessary model calls.
+            - Use existing scripts whenever possible.
 
             USER TASK:
             ${{ github.event.inputs.task || github.event.comment.body }}
+
+            FINAL REPORT:
+            Changed files:
+            Build:
+            Tests:
+            Verification:
+            Evidence:
+            Remaining blockers:

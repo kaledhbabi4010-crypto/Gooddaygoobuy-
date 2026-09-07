@@ -1,91 +1,53 @@
-name: Gemini AI Agent
-
-on:
-  workflow_dispatch:
-    inputs:
-      task:
-        description: "Gemini Task"
-        required: true
-        type: string
-
-  issues:
-    types: [opened]
-
-  issue_comment:
-    types: [created]
-
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
+  actions: write
+
+concurrency:
+  group: gemini-self-repair
+  cancel-in-progress: false
 
 jobs:
-  gemini:
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event_name == 'issues' &&
-        contains(github.event.issue.body, '@gemini-cli')
-      ) ||
-      (
-        github.event_name == 'issue_comment' &&
-        contains(github.event.comment.body, '@gemini-cli')
-      )
-
+  repair:
     runs-on: ubuntu-latest
-
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_WORKFLOW_PAT }}
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Git identity
+        run: |
+          git config user.name "Gemini Self Repair"
+          git config user.email "gemini-self-repair@users.noreply.github.com"
 
-      - name: Run Gemini
+      - name: Gemini Self Repair
         uses: google-github-actions/run-gemini-cli@v0
+        timeout-minutes: 20
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_WORKFLOW_PAT }}
+          GEMINI_CLI_TRUST_WORKSPACE: "true"
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_cli_version: "0.58.0"
           prompt: |
-            You are the autonomous AI engineer for this repository.
+            SELF-REPAIR ONLY.
 
-            Read these files first:
-            - GEMINI.md
-            - KHALED-MASTER-PLAN.md
+            Repair and stabilize the Gemini GitHub Actions infrastructure.
 
-            USER TASK:
-            ${{ github.event.inputs.task || github.event.comment.body || github.event.issue.body }}
+            Inspect all .github/workflows files, GEMINI.md,
+            KHALED-MASTER-PLAN.md and git history.
 
-            Execute the task completely.
+            You may repair workflow files and commit/push the repair.
 
-            WORK:
-            1. Inspect the repository.
-            2. Understand the existing architecture.
-            3. Implement the required changes.
-            4. Build the project.
-            5. Run tests.
-            6. Diagnose failures.
-            7. Repair failures.
-            8. Build again.
-            9. Test again.
-            10. Verify the result.
+            Do NOT develop KHALED or REVO AI.
+            Do NOT modify application functionality.
 
-            IMPORTANT:
-            Never fabricate results.
-            Never claim success without real evidence.
-            Never claim Autodesk, Revit, or AutoCAD verification
-            without a real Autodesk environment.
-            Never change NOT_VERIFIED to VERIFIED without evidence.
-            Never hide failures.
-            Preserve existing functionality.
+            Validate YAML and inspect git diff before committing.
 
-            Use the existing repository scripts whenever possible.
+            Never fabricate verification.
 
-            At the end report:
-            - What was changed
-            - Build result
-            - Test result
-            - Verification result
-            - Remaining blockers
-            - Evidence
+            Final status must be:
+            VERIFIED / FAILED / NOT_VERIFIED / BLOCKED.

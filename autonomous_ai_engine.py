@@ -1300,3 +1300,239 @@ def run_stage5_tests():
 
     return True
 
+
+# ===== STAGE_6_CONTEXT_RESOURCE_INTELLIGENCE =====
+
+class ContextItem:
+    def __init__(self, key, value, priority=0, size=None):
+        self.key = str(key)
+        self.value = value
+        self.priority = int(priority)
+        self.size = self._estimate(value) if size is None else int(size)
+
+    @staticmethod
+    def _estimate(value):
+        if value is None:
+            return 0
+        if isinstance(value, str):
+            return len(value)
+        if isinstance(value, (list, tuple, set, dict)):
+            return len(str(value))
+        return len(str(value))
+
+class TokenEstimator:
+    def estimate(self, value):
+        if value is None:
+            return 0
+        if isinstance(value, str):
+            return max(1, (len(value) + 3) // 4)
+        return max(1, (len(str(value)) + 3) // 4)
+
+class ContextBudget:
+    def __init__(self, max_tokens=4096):
+        if int(max_tokens) <= 0:
+            raise ValueError('INVALID_CONTEXT_BUDGET')
+        self.max_tokens = int(max_tokens)
+        self.used_tokens = 0
+
+    def can_fit(self, tokens):
+        return self.used_tokens + int(tokens) <= self.max_tokens
+
+    def reserve(self, tokens):
+        tokens = int(tokens)
+        if tokens < 0:
+            raise ValueError('INVALID_TOKEN_COUNT')
+        if not self.can_fit(tokens):
+            return False
+        self.used_tokens += tokens
+        return True
+
+    @property
+    def remaining(self):
+        return self.max_tokens - self.used_tokens
+
+class ContextCache:
+    def __init__(self, max_items=128):
+        self.max_items = max(1, int(max_items))
+        self._items = {}
+
+    def get(self, key, default=None):
+        return self._items.get(key, default)
+
+    def set(self, key, value):
+        if key in self._items:
+            self._items[key] = value
+            return
+        if len(self._items) >= self.max_items:
+            first_key = next(iter(self._items))
+            del self._items[first_key]
+        self._items[key] = value
+
+    def clear(self):
+        self._items.clear()
+
+    def __len__(self):
+        return len(self._items)
+
+class SmartContext:
+    def __init__(self, estimator=None, budget=None, cache=None):
+        self.estimator = estimator or TokenEstimator()
+        self.budget = budget or ContextBudget()
+        self.cache = cache or ContextCache()
+
+    def add(self, key, value, priority=0):
+        tokens = self.estimator.estimate(value)
+
+        if not self.budget.can_fit(tokens):
+            return False
+
+        item = ContextItem(
+            key=key,
+            value=value,
+            priority=priority,
+            size=tokens,
+        )
+
+        self.budget.reserve(tokens)
+        self.cache.set(key, item)
+        return True
+
+    def get(self, key, default=None):
+        item = self.cache.get(key)
+        if item is None:
+            return default
+        return item.value
+
+    def snapshot(self):
+        items = []
+        for item in self.cache._items.values():
+            items.append({
+                'key': item.key,
+                'value': item.value,
+                'priority': item.priority,
+                'size': item.size,
+            })
+        items.sort(
+            key=lambda x: (-x['priority'], x['key'])
+        )
+        return items
+
+class EfficientContextCycle:
+    def __init__(self, context):
+        self.context = context
+
+    def build(self, items):
+        selected = []
+
+        ordered = sorted(
+            items,
+            key=lambda x: -int(x.get('priority', 0))
+        )
+
+        for item in ordered:
+            if self.context.add(
+                item.get('key'),
+                item.get('value'),
+                item.get('priority', 0)
+            ):
+                selected.append(item.get('key'))
+
+        return selected
+
+class ResourceAwareEngine:
+    def __init__(self, context=None):
+        self.context = context or SmartContext()
+
+    def resource_state(self):
+        return {
+            'max_tokens': self.context.budget.max_tokens,
+            'used_tokens': self.context.budget.used_tokens,
+            'remaining_tokens': self.context.budget.remaining,
+            'cached_items': len(self.context.cache),
+        }
+
+class PersistentResourceGateway:
+    def __init__(self, store=None):
+        self.store = store
+
+    def save(self, key, value):
+        if self.store is None:
+            return False
+
+        if hasattr(self.store, 'set'):
+            self.store.set(key, value)
+            return True
+
+        if hasattr(self.store, 'save'):
+            self.store.save(key, value)
+            return True
+
+        return False
+
+    def load(self, key, default=None):
+        if self.store is None:
+            return default
+
+        if hasattr(self.store, 'get'):
+            return self.store.get(key, default)
+
+        if hasattr(self.store, 'load'):
+            return self.store.load(key, default)
+
+        return default
+
+def run_stage6_tests():
+    estimator = TokenEstimator()
+    assert estimator.estimate('abcd') == 1
+    assert estimator.estimate('abcdefgh') == 2
+
+    budget = ContextBudget(max_tokens=5)
+    assert budget.can_fit(3) is True
+    assert budget.reserve(3) is True
+    assert budget.used_tokens == 3
+    assert budget.remaining == 2
+    assert budget.reserve(3) is False
+
+    cache = ContextCache(max_items=2)
+    cache.set('a', 1)
+    cache.set('b', 2)
+    cache.set('c', 3)
+    assert len(cache) == 2
+    assert cache.get('a') is None
+    assert cache.get('c') == 3
+
+    context = SmartContext(
+        estimator=TokenEstimator(),
+        budget=ContextBudget(max_tokens=10),
+        cache=ContextCache(),
+    )
+
+    assert context.add('important', '123456', priority=10)
+    assert context.get('important') == '123456'
+
+    cycle = EfficientContextCycle(
+        SmartContext(
+            budget=ContextBudget(max_tokens=4)
+        )
+    )
+
+    selected = cycle.build([
+        {'key': 'low', 'value': '12345678', 'priority': 1},
+        {'key': 'high', 'value': '12345678', 'priority': 10},
+        {'key': 'extra', 'value': '12345678', 'priority': 0},
+    ])
+
+    assert selected[:2] == ['high', 'low']
+    assert 'extra' not in selected
+
+    resource = ResourceAwareEngine(context)
+    state = resource.resource_state()
+    assert 'remaining_tokens' in state
+    assert state['used_tokens'] > 0
+
+    gateway = PersistentResourceGateway()
+    assert gateway.save('x', 1) is False
+    assert gateway.load('x', 'default') == 'default'
+
+    return True
+

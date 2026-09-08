@@ -1,3 +1,4 @@
+import ast
 import re
 import json
 import tempfile
@@ -3776,3 +3777,584 @@ def run_stage12_tests():
     print("STAGE_12_EXTERNAL_CALLS_NOT_REQUIRED=VERIFIED")
     print("STAGE_12_TESTS=PASSED")
 
+# ============================================================
+# KHALED — STAGE 13 GitHub & DevOps Core
+# ============================================================
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+
+class GitOperationStatus(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    NOT_FOUND = "not_found"
+
+
+@dataclass
+class GitOperationResult:
+    status: GitOperationStatus
+    operation: str
+    message: str = ""
+    data: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def success(self) -> bool:
+        return self.status == GitOperationStatus.SUCCESS
+
+
+@dataclass
+class GitBranch:
+    name: str
+    sha: str = ""
+    protected: bool = False
+
+
+@dataclass
+class GitCommit:
+    sha: str
+    message: str
+    author: str = ""
+    timestamp: str = ""
+
+
+@dataclass
+class PullRequest:
+    number: int
+    title: str
+    head: str
+    base: str
+    state: str
+    url: str = ""
+
+
+@dataclass
+class CIResult:
+    run_id: int
+    name: str
+    status: str
+    conclusion: Optional[str] = None
+    url: str = ""
+
+
+class GitHubDevOpsClient:
+    """
+    Provider-neutral GitHub DevOps abstraction.
+
+    Network execution is deliberately separated from the core
+    data model so unit tests do not require GitHub credentials.
+    """
+
+    def __init__(
+        self,
+        owner: str,
+        repo: str,
+        token: Optional[str] = None,
+        base_url: str = "https://api.github.com",
+    ):
+        self.owner = owner
+        self.repo = repo
+        self.token = token
+        self.base_url = base_url.rstrip("/")
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "KHALED-Autonomous-AI-Engine",
+        }
+
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+
+        return headers
+
+    def endpoint(self, path: str) -> str:
+        if not path.startswith("/"):
+            path = "/" + path
+
+        return f"{self.base_url}/repos/{self.owner}/{self.repo}{path}"
+
+    def validate_repository(self) -> GitOperationResult:
+        if not self.owner or not self.repo:
+            return GitOperationResult(
+                GitOperationStatus.BLOCKED,
+                "validate_repository",
+                "owner and repo are required",
+            )
+
+        return GitOperationResult(
+            GitOperationStatus.SUCCESS,
+            "validate_repository",
+            "repository configuration valid",
+            {
+                "owner": self.owner,
+                "repo": self.repo,
+            },
+        )
+
+    def branch_endpoint(self, branch: str) -> str:
+        if not branch:
+            raise ValueError("branch is required")
+
+        return self.endpoint(f"/branches/{branch}")
+
+    def create_branch_payload(
+        self,
+        name: str,
+        from_sha: str,
+    ) -> Dict[str, Any]:
+        if not name or not from_sha:
+            raise ValueError("branch name and source SHA are required")
+
+        return {
+            "ref": f"refs/heads/{name}",
+            "sha": from_sha,
+        }
+
+    def commit_payload(
+        self,
+        message: str,
+        tree_sha: str,
+        parent_sha: str,
+    ) -> Dict[str, Any]:
+        if not message:
+            raise ValueError("commit message is required")
+
+        if not tree_sha:
+            raise ValueError("tree SHA is required")
+
+        if not parent_sha:
+            raise ValueError("parent SHA is required")
+
+        return {
+            "message": message,
+            "tree": tree_sha,
+            "parents": [parent_sha],
+        }
+
+    def pull_request_payload(
+        self,
+        title: str,
+        head: str,
+        base: str = "main",
+        body: str = "",
+    ) -> Dict[str, Any]:
+        if not title:
+            raise ValueError("PR title is required")
+
+        if not head:
+            raise ValueError("PR head is required")
+
+        if not base:
+            raise ValueError("PR base is required")
+
+        return {
+            "title": title,
+            "head": head,
+            "base": base,
+            "body": body,
+        }
+
+    def workflow_runs_endpoint(self) -> str:
+        return self.endpoint("/actions/runs")
+
+    def workflow_run_endpoint(self, run_id: int) -> str:
+        if int(run_id) <= 0:
+            raise ValueError("run_id must be positive")
+
+        return self.endpoint(f"/actions/runs/{int(run_id)}")
+
+    def actions_artifacts_endpoint(self) -> str:
+        return self.endpoint("/actions/artifacts")
+
+
+class GitHubHTTPExecutor:
+    """
+    Optional real HTTP layer.
+
+    No request is made unless explicitly invoked.
+    """
+
+    def __init__(self, client: GitHubDevOpsClient):
+        self.client = client
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout: int = 30,
+    ) -> GitOperationResult:
+
+        if not self.client.token:
+            return GitOperationResult(
+                GitOperationStatus.BLOCKED,
+                "http_request",
+                "GitHub token is required",
+            )
+
+        method = method.upper()
+
+        if method not in {
+            "GET",
+            "POST",
+            "PATCH",
+            "PUT",
+            "DELETE",
+        }:
+            return GitOperationResult(
+                GitOperationStatus.BLOCKED,
+                "http_request",
+                f"unsupported HTTP method: {method}",
+            )
+
+        try:
+            import requests
+
+            response = requests.request(
+                method,
+                self.client.endpoint(path),
+                headers=self.client._headers(),
+                json=payload,
+                timeout=timeout,
+            )
+
+            try:
+                data = response.json()
+            except Exception:
+                data = {"text": response.text}
+
+            if 200 <= response.status_code < 300:
+                return GitOperationResult(
+                    GitOperationStatus.SUCCESS,
+                    "http_request",
+                    f"HTTP {response.status_code}",
+                    {
+                        "status_code": response.status_code,
+                        "data": data,
+                    },
+                )
+
+            return GitOperationResult(
+                GitOperationStatus.FAILED,
+                "http_request",
+                f"HTTP {response.status_code}",
+                {
+                    "status_code": response.status_code,
+                    "data": data,
+                },
+            )
+
+        except Exception as exc:
+            return GitOperationResult(
+                GitOperationStatus.FAILED,
+                "http_request",
+                f"{type(exc).__name__}: {exc}",
+            )
+
+
+class DevOpsPolicy:
+    """
+    Safety gate for GitHub mutations.
+    """
+
+    DESTRUCTIVE = {
+        "delete_branch",
+        "delete_repository",
+        "force_push",
+        "merge_pull_request",
+    }
+
+    WRITE = {
+        "create_branch",
+        "create_commit",
+        "push",
+        "create_pull_request",
+        "dispatch_workflow",
+    }
+
+    READ = {
+        "get_repository",
+        "get_branch",
+        "get_commit",
+        "get_pull_request",
+        "get_actions",
+        "get_ci",
+    }
+
+    def authorize(
+        self,
+        operation: str,
+        approved: bool = False,
+    ) -> GitOperationResult:
+
+        if operation in self.DESTRUCTIVE and not approved:
+            return GitOperationResult(
+                GitOperationStatus.BLOCKED,
+                operation,
+                "explicit approval required",
+            )
+
+        if operation in self.WRITE and not approved:
+            return GitOperationResult(
+                GitOperationStatus.BLOCKED,
+                operation,
+                "write operation requires approval",
+            )
+
+        if operation in self.READ:
+            return GitOperationResult(
+                GitOperationStatus.SUCCESS,
+                operation,
+                "read operation authorized",
+            )
+
+        if operation in self.WRITE or operation in self.DESTRUCTIVE:
+            return GitOperationResult(
+                GitOperationStatus.SUCCESS,
+                operation,
+                "operation authorized",
+            )
+
+        return GitOperationResult(
+            GitOperationStatus.BLOCKED,
+            operation,
+            "unknown operation",
+        )
+
+
+class GitHubDevOps:
+    """
+    High-level DevOps orchestration abstraction.
+    """
+
+    def __init__(
+        self,
+        owner: str,
+        repo: str,
+        token: Optional[str] = None,
+    ):
+        self.client = GitHubDevOpsClient(
+            owner=owner,
+            repo=repo,
+            token=token,
+        )
+        self.http = GitHubHTTPExecutor(self.client)
+        self.policy = DevOpsPolicy()
+
+    def plan_branch(
+        self,
+        branch: str,
+        from_sha: str,
+    ) -> GitOperationResult:
+
+        payload = self.client.create_branch_payload(
+            branch,
+            from_sha,
+        )
+
+        return GitOperationResult(
+            GitOperationStatus.SUCCESS,
+            "create_branch",
+            "branch operation planned",
+            payload,
+        )
+
+    def plan_commit(
+        self,
+        message: str,
+        tree_sha: str,
+        parent_sha: str,
+    ) -> GitOperationResult:
+
+        payload = self.client.commit_payload(
+            message,
+            tree_sha,
+            parent_sha,
+        )
+
+        return GitOperationResult(
+            GitOperationStatus.SUCCESS,
+            "create_commit",
+            "commit operation planned",
+            payload,
+        )
+
+    def plan_pull_request(
+        self,
+        title: str,
+        head: str,
+        base: str = "main",
+        body: str = "",
+    ) -> GitOperationResult:
+
+        payload = self.client.pull_request_payload(
+            title,
+            head,
+            base,
+            body,
+        )
+
+        return GitOperationResult(
+            GitOperationStatus.SUCCESS,
+            "create_pull_request",
+            "pull request operation planned",
+            payload,
+        )
+
+    def plan_ci_query(self) -> GitOperationResult:
+        return GitOperationResult(
+            GitOperationStatus.SUCCESS,
+            "get_ci",
+            "CI query planned",
+            {
+                "endpoint": self.client.workflow_runs_endpoint(),
+            },
+        )
+
+
+def run_stage13_tests() -> Dict[str, Any]:
+    """
+    Self-contained deterministic Stage 13 test suite.
+    """
+
+    results = []
+
+    client = GitHubDevOpsClient(
+        "owner",
+        "repo",
+    )
+
+    # 1
+    assert client.validate_repository().success
+    results.append("repository")
+
+    # 2
+    branch = client.create_branch_payload(
+        "feature/test",
+        "abc123",
+    )
+    assert branch["ref"] == "refs/heads/feature/test"
+    assert branch["sha"] == "abc123"
+    results.append("branch")
+
+    # 3
+    commit = client.commit_payload(
+        "test commit",
+        "tree123",
+        "parent123",
+    )
+    assert commit["message"] == "test commit"
+    assert commit["tree"] == "tree123"
+    assert commit["parents"] == ["parent123"]
+    results.append("commit")
+
+    # 4
+    pr = client.pull_request_payload(
+        "Test PR",
+        "feature/test",
+        "main",
+    )
+    assert pr["title"] == "Test PR"
+    assert pr["head"] == "feature/test"
+    assert pr["base"] == "main"
+    results.append("pull_request")
+
+    # 5
+    assert "/actions/runs" in client.workflow_runs_endpoint()
+    results.append("actions")
+
+    # 6
+    assert "/actions/artifacts" in client.actions_artifacts_endpoint()
+    results.append("artifacts")
+
+    # 7
+    policy = DevOpsPolicy()
+
+    assert policy.authorize(
+        "get_ci"
+    ).success
+    results.append("read_policy")
+
+    # 8
+    assert policy.authorize(
+        "push"
+    ).status == GitOperationStatus.BLOCKED
+    results.append("write_block")
+
+    # 9
+    assert policy.authorize(
+        "push",
+        approved=True,
+    ).success
+    results.append("write_approval")
+
+    # 10
+    assert policy.authorize(
+        "force_push"
+    ).status == GitOperationStatus.BLOCKED
+    results.append("destructive_block")
+
+    # 11
+    gateway = GitHubDevOps(
+        "owner",
+        "repo",
+    )
+
+    assert gateway.plan_branch(
+        "feature/x",
+        "abc",
+    ).success
+
+    assert gateway.plan_commit(
+        "message",
+        "tree",
+        "parent",
+    ).success
+
+    assert gateway.plan_pull_request(
+        "title",
+        "head",
+    ).success
+
+    assert gateway.plan_ci_query().success
+    results.append("gateway")
+
+    # 12
+    no_token = GitHubHTTPExecutor(client)
+    blocked = no_token.request("GET", "/branches/main")
+
+    assert blocked.status == GitOperationStatus.BLOCKED
+    results.append("network_guard")
+
+    # 13
+    try:
+        client.create_branch_payload("", "abc")
+        raise AssertionError("missing branch validation failed")
+    except ValueError:
+        results.append("validation")
+
+    # 14
+    try:
+        client.commit_payload("", "tree", "parent")
+        raise AssertionError("missing commit validation failed")
+    except ValueError:
+        results.append("commit_validation")
+
+    # 15
+    source = Path(__file__).read_text(
+        encoding="utf-8"
+    )
+
+    ast.parse(source)
+
+    results.append("ast")
+
+    return {
+        "passed": len(results),
+        "tests": results,
+        "status": "PASSED",
+    }

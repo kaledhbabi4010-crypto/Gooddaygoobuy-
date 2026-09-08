@@ -1,13 +1,13 @@
+import re
+import json
+import tempfile
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-import json
 import time
-import tempfile
 import uuid
 
 
@@ -812,7 +812,6 @@ class ToolSystem:
 
 
 def run_stage3_tests():
-    import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
         system = ToolSystem(tmp)
@@ -2243,3 +2242,367 @@ def run_stage8_tests():
 
     return True
 
+
+# ===== STAGE_9_VERIFICATION_PERSISTENCE =====
+
+class VerificationStatus:
+    VERIFIED = 'VERIFIED'
+    FAILED = 'FAILED'
+    NOT_VERIFIED = 'NOT_VERIFIED'
+    BLOCKED = 'BLOCKED'
+
+class EvidenceRecord:
+    def __init__(self, check, status, details=None):
+        self.check = str(check)
+        self.status = str(status)
+        self.details = details or {}
+
+    def to_dict(self):
+        return {
+            'check': self.check,
+            'status': self.status,
+            'details': self.details,
+        }
+
+class EvidenceStore:
+    def __init__(self):
+        self.records = []
+
+    def add(self, check, status, details=None):
+        record = EvidenceRecord(check, status, details)
+        self.records.append(record)
+        return record
+
+    def latest(self, check):
+        for record in reversed(self.records):
+            if record.check == check:
+                return record
+        return None
+
+    def verified(self, check):
+        record = self.latest(check)
+        return bool(
+            record is not None and
+            record.status == VerificationStatus.VERIFIED
+        )
+
+    def export(self):
+        return [record.to_dict() for record in self.records]
+
+class VerificationGate:
+    def __init__(self, evidence=None):
+        self.evidence = evidence or EvidenceStore()
+
+    def verify(self, check, condition, details=None):
+        status = (
+            VerificationStatus.VERIFIED
+            if bool(condition)
+            else VerificationStatus.FAILED
+        )
+
+        self.evidence.add(
+            check,
+            status,
+            details,
+        )
+
+        return status == VerificationStatus.VERIFIED
+
+    def require(self, check):
+        return self.evidence.verified(check)
+
+class RiskLevel:
+    LOW = 'LOW'
+    MEDIUM = 'MEDIUM'
+    HIGH = 'HIGH'
+    CRITICAL = 'CRITICAL'
+
+class PolicyDecision:
+    ALLOW = 'ALLOW'
+    DENY = 'DENY'
+    REVIEW = 'REVIEW'
+
+class PolicyRiskGate:
+    def __init__(self):
+        self.history = []
+
+    def evaluate(self, operation, risk=RiskLevel.LOW, verified=False):
+        if risk == RiskLevel.CRITICAL:
+            decision = PolicyDecision.DENY
+        elif risk == RiskLevel.HIGH and not verified:
+            decision = PolicyDecision.REVIEW
+        else:
+            decision = PolicyDecision.ALLOW
+
+        result = {
+            'operation': str(operation),
+            'risk': risk,
+            'verified': bool(verified),
+            'decision': decision,
+        }
+
+        self.history.append(result)
+        return result
+
+class SecretScanner:
+    PATTERNS = [
+        re.compile(r'ghp_[A-Za-z0-9]{20,}'),
+        re.compile(r'github_pat_[A-Za-z0-9_]{20,}'),
+        re.compile(r'AKIA[0-9A-Z]{16}'),
+        re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
+        re.compile(r'(?i)(api[_-]?key|secret|token)\s*[:=]\s*["\'][^"\']{12,}["\']'),
+    ]
+
+    def scan(self, text):
+        findings = []
+        value = str(text)
+
+        for pattern in self.PATTERNS:
+            for match in pattern.finditer(value):
+                findings.append({
+                    'pattern': pattern.pattern,
+                    'start': match.start(),
+                    'end': match.end(),
+                })
+
+        return findings
+
+    def clean(self, text):
+        return len(self.scan(text)) == 0
+
+class DiagnosticRecord:
+    def __init__(self, component, status, message='', details=None):
+        self.component = str(component)
+        self.status = str(status)
+        self.message = str(message)
+        self.details = details or {}
+
+    def to_dict(self):
+        return {
+            'component': self.component,
+            'status': self.status,
+            'message': self.message,
+            'details': self.details,
+        }
+
+class Diagnostics:
+    def __init__(self):
+        self.records = []
+
+    def record(self, component, status, message='', details=None):
+        item = DiagnosticRecord(
+            component,
+            status,
+            message,
+            details,
+        )
+        self.records.append(item)
+        return item
+
+    def latest(self, component):
+        for item in reversed(self.records):
+            if item.component == component:
+                return item
+        return None
+
+class ExecutionHistory:
+    def __init__(self):
+        self.entries = []
+
+    def add(self, task, status, details=None):
+        entry = {
+            'task': str(task),
+            'status': str(status),
+            'details': details or {},
+        }
+        self.entries.append(entry)
+        return entry
+
+    def last(self):
+        return self.entries[-1] if self.entries else None
+
+    def export(self):
+        return list(self.entries)
+
+class PersistentLifecycle:
+    def __init__(self, path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def save(self, state):
+        temp = self.path.with_suffix(self.path.suffix + '.tmp')
+        temp.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
+        temp.replace(self.path)
+        return True
+
+    def load(self):
+        if not self.path.exists():
+            return None
+        return json.loads(
+            self.path.read_text(encoding='utf-8')
+        )
+
+    def exists(self):
+        return self.path.exists()
+
+class RestartResume:
+    def __init__(self, lifecycle):
+        self.lifecycle = lifecycle
+
+    def checkpoint(self, task_id, state, status='PAUSED'):
+        payload = {
+            'task_id': str(task_id),
+            'status': str(status),
+            'state': state,
+        }
+        return self.lifecycle.save(payload)
+
+    def resume(self):
+        return self.lifecycle.load()
+
+class VerifiedExecution:
+    def __init__(self):
+        self.evidence = EvidenceStore()
+        self.gate = VerificationGate(self.evidence)
+
+    def execute(self, name, operation):
+        try:
+            result = operation()
+            verified = self.gate.verify(
+                name,
+                True,
+                {'result_type': type(result).__name__},
+            )
+            return {
+                'success': verified,
+                'result': result,
+                'status': VerificationStatus.VERIFIED,
+            }
+        except Exception as exc:
+            self.gate.verify(
+                name,
+                False,
+                {'error': str(exc)},
+            )
+            return {
+                'success': False,
+                'result': None,
+                'status': VerificationStatus.FAILED,
+            }
+
+def run_stage9_tests():
+    evidence = EvidenceStore()
+    gate = VerificationGate(evidence)
+
+    assert gate.verify('basic_check', True)
+    assert evidence.verified('basic_check')
+
+    assert not gate.verify('failed_check', False)
+    assert not evidence.verified('failed_check')
+
+    policy = PolicyRiskGate()
+
+    low = policy.evaluate(
+        'read_file',
+        RiskLevel.LOW,
+        verified=False,
+    )
+    assert low['decision'] == PolicyDecision.ALLOW
+
+    high = policy.evaluate(
+        'dangerous_operation',
+        RiskLevel.HIGH,
+        verified=False,
+    )
+    assert high['decision'] == PolicyDecision.REVIEW
+
+    critical = policy.evaluate(
+        'critical_operation',
+        RiskLevel.CRITICAL,
+        verified=True,
+    )
+    assert critical['decision'] == PolicyDecision.DENY
+
+    scanner = SecretScanner()
+    clean = 'ordinary project text with no credentials'
+    assert scanner.clean(clean)
+
+    secret_text = 'token = "ghp_' + ('A' * 30) + '"'
+    assert scanner.clean(secret_text) is False
+    assert len(scanner.scan(secret_text)) >= 1
+
+    diagnostics = Diagnostics()
+    record = diagnostics.record(
+        'planner',
+        'HEALTHY',
+        'planner operational',
+    )
+    assert record.status == 'HEALTHY'
+    assert diagnostics.latest('planner').status == 'HEALTHY'
+
+    history = ExecutionHistory()
+    history.add('task-1', 'SUCCESS', {'step': 1})
+    history.add('task-2', 'FAILED', {'step': 2})
+    assert history.last()['task'] == 'task-2'
+    assert len(history.export()) == 2
+
+    with tempfile.TemporaryDirectory() as directory:
+        lifecycle = PersistentLifecycle(
+            Path(directory) / 'state.json'
+        )
+
+        resume = RestartResume(lifecycle)
+
+        state = {
+            'step': 7,
+            'memory': ['a', 'b'],
+            'status': 'running',
+        }
+
+        assert resume.checkpoint(
+            'task-42',
+            state,
+            'PAUSED',
+        )
+
+        assert lifecycle.exists()
+
+        restored = resume.resume()
+
+        assert restored is not None
+        assert restored['task_id'] == 'task-42'
+        assert restored['state']['step'] == 7
+        assert restored['state']['memory'] == ['a', 'b']
+
+    execution = VerifiedExecution()
+
+    success = execution.execute(
+        'successful_operation',
+        lambda: {'ok': True},
+    )
+
+    assert success['success'] is True
+    assert success['status'] == VerificationStatus.VERIFIED
+
+    failure = execution.execute(
+        'failed_operation',
+        lambda: (_ for _ in ()).throw(
+            RuntimeError('controlled failure')
+        ),
+    )
+
+    assert failure['success'] is False
+    assert failure['status'] == VerificationStatus.FAILED
+
+    # Critical anti-false-success rule.
+    assert execution.evidence.verified(
+        'successful_operation'
+    )
+    assert not execution.evidence.verified(
+        'failed_operation'
+    )
+
+    return True

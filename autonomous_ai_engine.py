@@ -2978,6 +2978,7 @@ import os as _os11
 import subprocess as _subprocess11
 import tempfile as _tempfile11
 import threading as _threading11
+threading = _threading11
 import time as _time11
 from dataclasses import dataclass as _dataclass11
 from pathlib import Path as _Path11
@@ -4357,4 +4358,1188 @@ def run_stage13_tests() -> Dict[str, Any]:
         "passed": len(results),
         "tests": results,
         "status": "PASSED",
+    }
+
+# ============================================================
+# KHALED — STAGE 14 Agent Server Core
+# ============================================================
+
+
+class AgentTaskStatus(str, Enum):
+    CREATED = "created"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class AgentSession:
+    session_id: str
+    authenticated: bool = False
+    created_at: float = field(default_factory=time.time)
+    last_activity: float = field(default_factory=time.time)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentEvent:
+    event_id: str
+    task_id: str
+    event_type: str
+    timestamp: float
+    data: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentTask:
+    task_id: str
+    session_id: str
+    command: str
+    status: AgentTaskStatus = AgentTaskStatus.CREATED
+    created_at: float = field(default_factory=time.time)
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    result: Any = None
+    error: Optional[str] = None
+    cancel_requested: bool = False
+    events: List[AgentEvent] = field(default_factory=list)
+
+
+@dataclass
+class AgentResponse:
+    success: bool
+    status: str
+    message: str = ""
+    data: Dict[str, Any] = field(default_factory=dict)
+
+
+class AgentAuthenticator:
+    """
+    Authentication boundary.
+
+    Tokens are compared in-memory only.
+    Plain tokens are never returned by the API.
+    """
+
+    def __init__(self):
+        self._tokens = set()
+
+    def register_token(self, token: str) -> bool:
+        if not token or not isinstance(token, str):
+            return False
+
+        self._tokens.add(token)
+
+        return True
+
+    def revoke_token(self, token: str) -> bool:
+        if token in self._tokens:
+            self._tokens.remove(token)
+            return True
+
+        return False
+
+    def authenticate(self, token: str) -> bool:
+        if not token:
+            return False
+
+        return token in self._tokens
+
+    def token_count(self) -> int:
+        return len(self._tokens)
+
+
+class AgentSessionManager:
+
+    def __init__(self):
+        self._sessions: Dict[str, AgentSession] = {}
+        self._lock = threading.RLock()
+
+    def create(
+        self,
+        authenticated: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> AgentSession:
+
+        session = AgentSession(
+            session_id=str(uuid.uuid4()),
+            authenticated=authenticated,
+            metadata=dict(metadata or {}),
+        )
+
+        with self._lock:
+            self._sessions[
+                session.session_id
+            ] = session
+
+        return session
+
+    def get(
+        self,
+        session_id: str,
+    ) -> Optional[AgentSession]:
+
+        with self._lock:
+            return self._sessions.get(
+                session_id
+            )
+
+    def touch(
+        self,
+        session_id: str,
+    ) -> bool:
+
+        with self._lock:
+
+            session = self._sessions.get(
+                session_id
+            )
+
+            if not session:
+                return False
+
+            session.last_activity = time.time()
+
+            return True
+
+    def delete(
+        self,
+        session_id: str,
+    ) -> bool:
+
+        with self._lock:
+
+            if session_id not in self._sessions:
+                return False
+
+            del self._sessions[
+                session_id
+            ]
+
+            return True
+
+    def count(self) -> int:
+
+        with self._lock:
+            return len(self._sessions)
+
+
+class AgentTaskManager:
+
+    def __init__(self):
+        self._tasks: Dict[str, AgentTask] = {}
+        self._lock = threading.RLock()
+
+    def create(
+        self,
+        session_id: str,
+        command: str,
+    ) -> AgentTask:
+
+        task = AgentTask(
+            task_id=str(uuid.uuid4()),
+            session_id=session_id,
+            command=command,
+        )
+
+        with self._lock:
+            self._tasks[
+                task.task_id
+            ] = task
+
+        return task
+
+    def get(
+        self,
+        task_id: str,
+    ) -> Optional[AgentTask]:
+
+        with self._lock:
+            return self._tasks.get(
+                task_id
+            )
+
+    def list(
+        self,
+        session_id: Optional[str] = None,
+    ) -> List[AgentTask]:
+
+        with self._lock:
+
+            values = list(
+                self._tasks.values()
+            )
+
+            if session_id is not None:
+                values = [
+                    task
+                    for task in values
+                    if task.session_id == session_id
+                ]
+
+            return list(values)
+
+    def request_cancel(
+        self,
+        task_id: str,
+    ) -> bool:
+
+        with self._lock:
+
+            task = self._tasks.get(
+                task_id
+            )
+
+            if not task:
+                return False
+
+            if task.status in {
+                AgentTaskStatus.COMPLETED,
+                AgentTaskStatus.FAILED,
+                AgentTaskStatus.CANCELLED,
+            }:
+                return False
+
+            task.cancel_requested = True
+
+            return True
+
+
+class AgentEventBus:
+
+    def __init__(self):
+        self._events: List[AgentEvent] = []
+        self._lock = threading.RLock()
+
+    def publish(
+        self,
+        task_id: str,
+        event_type: str,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> AgentEvent:
+
+        event = AgentEvent(
+            event_id=str(uuid.uuid4()),
+            task_id=task_id,
+            event_type=event_type,
+            timestamp=time.time(),
+            data=dict(data or {}),
+        )
+
+        with self._lock:
+            self._events.append(event)
+
+        return event
+
+    def list(
+        self,
+        task_id: Optional[str] = None,
+    ) -> List[AgentEvent]:
+
+        with self._lock:
+
+            values = list(
+                self._events
+            )
+
+            if task_id is not None:
+                values = [
+                    event
+                    for event in values
+                    if event.task_id == task_id
+                ]
+
+            return values
+
+
+class AgentServerCore:
+
+    """
+    Transport-neutral Agent Server.
+
+    This is the core API boundary.
+    HTTP/WebSocket adapters can be attached later.
+    """
+
+    def __init__(
+        self,
+        engine: Optional[Any] = None,
+        authenticator: Optional[AgentAuthenticator] = None,
+    ):
+
+        self.engine = engine
+
+        self.auth = (
+            authenticator
+            or AgentAuthenticator()
+        )
+
+        self.sessions = AgentSessionManager()
+        self.tasks = AgentTaskManager()
+        self.events = AgentEventBus()
+
+        self._workers: Dict[
+            str,
+            threading.Thread
+        ] = {}
+
+    # --------------------------------------------------------
+    # Authentication
+    # --------------------------------------------------------
+
+    def authenticate(
+        self,
+        token: str,
+    ) -> AgentResponse:
+
+        if not self.auth.authenticate(token):
+
+            return AgentResponse(
+                False,
+                "unauthorized",
+                "authentication failed",
+            )
+
+        session = self.sessions.create(
+            authenticated=True
+        )
+
+        return AgentResponse(
+            True,
+            "authenticated",
+            data={
+                "session_id":
+                    session.session_id
+            },
+        )
+
+    # --------------------------------------------------------
+    # Session validation
+    # --------------------------------------------------------
+
+    def _session(
+        self,
+        session_id: str,
+    ) -> Optional[AgentSession]:
+
+        session = self.sessions.get(
+            session_id
+        )
+
+        if not session:
+            return None
+
+        if not session.authenticated:
+            return None
+
+        self.sessions.touch(
+            session_id
+        )
+
+        return session
+
+    # --------------------------------------------------------
+    # Status
+    # --------------------------------------------------------
+
+    def status(self) -> AgentResponse:
+
+        return AgentResponse(
+            True,
+            "ok",
+            data={
+                "engine_loaded":
+                    self.engine is not None,
+                "sessions":
+                    self.sessions.count(),
+                "tasks":
+                    len(self.tasks.list()),
+                "workers":
+                    len(self._workers),
+            },
+        )
+
+    # --------------------------------------------------------
+    # Chat
+    # --------------------------------------------------------
+
+    def chat(
+        self,
+        session_id: str,
+        message: str,
+    ) -> AgentResponse:
+
+        session = self._session(
+            session_id
+        )
+
+        if not session:
+            return AgentResponse(
+                False,
+                "unauthorized",
+                "invalid session",
+            )
+
+        if not message or not isinstance(
+            message,
+            str,
+        ):
+            return AgentResponse(
+                False,
+                "invalid_input",
+                "message is required",
+            )
+
+        # Chat is intentionally routed through
+        # the execution boundary only when an engine exists.
+
+        if self.engine is not None:
+
+            try:
+
+                if hasattr(
+                    self.engine,
+                    "chat"
+                ):
+
+                    result = self.engine.chat(
+                        message
+                    )
+
+                    return AgentResponse(
+                        True,
+                        "completed",
+                        data={
+                            "result": result
+                        },
+                    )
+
+            except Exception as exc:
+
+                return AgentResponse(
+                    False,
+                    "failed",
+                    f"{type(exc).__name__}: {exc}",
+                )
+
+        return AgentResponse(
+            True,
+            "accepted",
+            data={
+                "message": message
+            },
+        )
+
+    # --------------------------------------------------------
+    # Execute
+    # --------------------------------------------------------
+
+    def execute(
+        self,
+        session_id: str,
+        command: str,
+        executor: Optional[
+            Callable[[str, AgentTask], Any]
+        ] = None,
+    ) -> AgentResponse:
+
+        session = self._session(
+            session_id
+        )
+
+        if not session:
+            return AgentResponse(
+                False,
+                "unauthorized",
+                "invalid session",
+            )
+
+        if not command or not isinstance(
+            command,
+            str,
+        ):
+            return AgentResponse(
+                False,
+                "invalid_input",
+                "command is required",
+            )
+
+        task = self.tasks.create(
+            session_id,
+            command,
+        )
+
+        self.events.publish(
+            task.task_id,
+            "task.created",
+            {
+                "command": command
+            },
+        )
+
+        worker = threading.Thread(
+            target=self._run_task,
+            args=(task, executor),
+            daemon=True,
+        )
+
+        self._workers[
+            task.task_id
+        ] = worker
+
+        worker.start()
+
+        return AgentResponse(
+            True,
+            "accepted",
+            data={
+                "task_id":
+                    task.task_id
+            },
+        )
+
+    # --------------------------------------------------------
+    # Internal execution worker
+    # --------------------------------------------------------
+
+    def _run_task(
+        self,
+        task: AgentTask,
+        executor: Optional[
+            Callable[[str, AgentTask], Any]
+        ],
+    ):
+
+        task.status = AgentTaskStatus.RUNNING
+        task.started_at = time.time()
+
+        self.events.publish(
+            task.task_id,
+            "task.started",
+        )
+
+        try:
+
+            if task.cancel_requested:
+
+                task.status = (
+                    AgentTaskStatus.CANCELLED
+                )
+
+                self.events.publish(
+                    task.task_id,
+                    "task.cancelled",
+                )
+
+                return
+
+            if executor is not None:
+
+                result = executor(
+                    task.command,
+                    task,
+                )
+
+            elif self.engine is not None and hasattr(
+                self.engine,
+                "execute",
+            ):
+
+                result = self.engine.execute(
+                    task.command
+                )
+
+            else:
+
+                result = task.command
+
+            if task.cancel_requested:
+
+                task.status = (
+                    AgentTaskStatus.CANCELLED
+                )
+
+                task.result = None
+
+                self.events.publish(
+                    task.task_id,
+                    "task.cancelled",
+                )
+
+                return
+
+            if result is None:
+
+                task.status = (
+                    AgentTaskStatus.FAILED
+                )
+
+                task.error = (
+                    "executor returned no result"
+                )
+
+                self.events.publish(
+                    task.task_id,
+                    "task.failed",
+                    {
+                        "error":
+                            task.error
+                    },
+                )
+
+                return
+
+            task.result = result
+
+            task.status = (
+                AgentTaskStatus.COMPLETED
+            )
+
+            self.events.publish(
+                task.task_id,
+                "task.completed",
+                {
+                    "result":
+                        result
+                },
+            )
+
+        except Exception as exc:
+
+            task.status = (
+                AgentTaskStatus.FAILED
+            )
+
+            task.error = (
+                f"{type(exc).__name__}: {exc}"
+            )
+
+            self.events.publish(
+                task.task_id,
+                "task.failed",
+                {
+                    "error":
+                        task.error
+                },
+            )
+
+        finally:
+
+            task.finished_at = time.time()
+
+            self._workers.pop(
+                task.task_id,
+                None,
+            )
+
+    # --------------------------------------------------------
+    # Task status
+    # --------------------------------------------------------
+
+    def task_status(
+        self,
+        session_id: str,
+        task_id: str,
+    ) -> AgentResponse:
+
+        session = self._session(
+            session_id
+        )
+
+        if not session:
+            return AgentResponse(
+                False,
+                "unauthorized",
+                "invalid session",
+            )
+
+        task = self.tasks.get(
+            task_id
+        )
+
+        if not task or task.session_id != session_id:
+
+            return AgentResponse(
+                False,
+                "not_found",
+                "task not found",
+            )
+
+        return AgentResponse(
+            True,
+            task.status.value,
+            data={
+                "task_id":
+                    task.task_id,
+                "status":
+                    task.status.value,
+                "result":
+                    task.result,
+                "error":
+                    task.error,
+            },
+        )
+
+    # --------------------------------------------------------
+    # Cancel
+    # --------------------------------------------------------
+
+    def cancel(
+        self,
+        session_id: str,
+        task_id: str,
+    ) -> AgentResponse:
+
+        session = self._session(
+            session_id
+        )
+
+        if not session:
+
+            return AgentResponse(
+                False,
+                "unauthorized",
+                "invalid session",
+            )
+
+        task = self.tasks.get(
+            task_id
+        )
+
+        if not task or task.session_id != session_id:
+
+            return AgentResponse(
+                False,
+                "not_found",
+                "task not found",
+            )
+
+        if not self.tasks.request_cancel(
+            task_id
+        ):
+
+            return AgentResponse(
+                False,
+                "not_cancelled",
+                "task cannot be cancelled",
+            )
+
+        self.events.publish(
+            task_id,
+            "task.cancel_requested",
+        )
+
+        return AgentResponse(
+            True,
+            "cancel_requested",
+            data={
+                "task_id":
+                    task_id
+            },
+        )
+
+    # --------------------------------------------------------
+    # Events
+    # --------------------------------------------------------
+
+    def events_for_task(
+        self,
+        session_id: str,
+        task_id: str,
+    ) -> AgentResponse:
+
+        session = self._session(
+            session_id
+        )
+
+        if not session:
+
+            return AgentResponse(
+                False,
+                "unauthorized",
+                "invalid session",
+            )
+
+        task = self.tasks.get(
+            task_id
+        )
+
+        if not task or task.session_id != session_id:
+
+            return AgentResponse(
+                False,
+                "not_found",
+                "task not found",
+            )
+
+        events = self.events.list(
+            task_id
+        )
+
+        return AgentResponse(
+            True,
+            "ok",
+            data={
+                "events": events
+            },
+        )
+
+    # --------------------------------------------------------
+    # Tasks
+    # --------------------------------------------------------
+
+    def list_tasks(
+        self,
+        session_id: str,
+    ) -> AgentResponse:
+
+        session = self._session(
+            session_id
+        )
+
+        if not session:
+
+            return AgentResponse(
+                False,
+                "unauthorized",
+                "invalid session",
+            )
+
+        tasks = self.tasks.list(
+            session_id
+        )
+
+        return AgentResponse(
+            True,
+            "ok",
+            data={
+                "tasks": tasks
+            },
+        )
+
+
+def run_stage14_tests() -> Dict[str, Any]:
+
+    results = []
+
+    # --------------------------------------------------------
+    # Authentication
+    # --------------------------------------------------------
+
+    auth = AgentAuthenticator()
+
+    assert auth.register_token(
+        "stage14-secret"
+    )
+
+    assert auth.authenticate(
+        "stage14-secret"
+    )
+
+    assert not auth.authenticate(
+        "wrong-secret"
+    )
+
+    results.append("authentication")
+
+    # --------------------------------------------------------
+    # Sessions
+    # --------------------------------------------------------
+
+    sessions = AgentSessionManager()
+
+    session = sessions.create(
+        authenticated=True
+    )
+
+    assert session.session_id
+    assert sessions.get(
+        session.session_id
+    ) is not None
+
+    assert sessions.touch(
+        session.session_id
+    )
+
+    results.append("sessions")
+
+    # --------------------------------------------------------
+    # Tasks
+    # --------------------------------------------------------
+
+    tasks = AgentTaskManager()
+
+    task = tasks.create(
+        session.session_id,
+        "test command",
+    )
+
+    assert task.task_id
+
+    assert tasks.get(
+        task.task_id
+    ) is task
+
+    results.append("tasks")
+
+    # --------------------------------------------------------
+    # Event bus
+    # --------------------------------------------------------
+
+    events = AgentEventBus()
+
+    event = events.publish(
+        task.task_id,
+        "test.event",
+        {
+            "value": 1
+        },
+    )
+
+    assert event.event_id
+
+    assert len(
+        events.list(task.task_id)
+    ) == 1
+
+    results.append("events")
+
+    # --------------------------------------------------------
+    # Server
+    # --------------------------------------------------------
+
+    server = AgentServerCore()
+
+    server.auth.register_token(
+        "server-token"
+    )
+
+    login = server.authenticate(
+        "server-token"
+    )
+
+    assert login.success
+
+    server_session_id = (
+        login.data["session_id"]
+    )
+
+    results.append("server_auth")
+
+    # --------------------------------------------------------
+    # Status
+    # --------------------------------------------------------
+
+    status = server.status()
+
+    assert status.success
+
+    results.append("status")
+
+    # --------------------------------------------------------
+    # Chat
+    # --------------------------------------------------------
+
+    chat = server.chat(
+        server_session_id,
+        "hello",
+    )
+
+    assert chat.success
+
+    results.append("chat")
+
+    # --------------------------------------------------------
+    # Async execute
+    # --------------------------------------------------------
+
+    def executor(command, task):
+        return "EXECUTED:" + command
+
+    execute = server.execute(
+        server_session_id,
+        "test",
+        executor=executor,
+    )
+
+    assert execute.success
+
+    task_id = execute.data[
+        "task_id"
+    ]
+
+    results.append("execute")
+
+    # --------------------------------------------------------
+    # Wait for worker
+    # --------------------------------------------------------
+
+    deadline = time.time() + 5
+
+    while time.time() < deadline:
+
+        task_response = server.task_status(
+            server_session_id,
+            task_id,
+        )
+
+        if task_response.status in {
+            "completed",
+            "failed",
+            "cancelled",
+        }:
+            break
+
+        time.sleep(0.01)
+
+    assert task_response.status == "completed"
+
+    assert (
+        task_response.data["result"]
+        == "EXECUTED:test"
+    )
+
+    results.append("task_completion")
+
+    # --------------------------------------------------------
+    # Events
+    # --------------------------------------------------------
+
+    event_response = server.events_for_task(
+        server_session_id,
+        task_id,
+    )
+
+    assert event_response.success
+
+    event_types = [
+        event.event_type
+        for event in
+        event_response.data["events"]
+    ]
+
+    assert "task.created" in event_types
+    assert "task.started" in event_types
+    assert "task.completed" in event_types
+
+    results.append("event_flow")
+
+    # --------------------------------------------------------
+    # Failure protection
+    # --------------------------------------------------------
+
+    def failing_executor(command, task):
+        raise RuntimeError(
+            "controlled failure"
+        )
+
+    failed = server.execute(
+        server_session_id,
+        "fail",
+        executor=failing_executor,
+    )
+
+    failed_id = failed.data[
+        "task_id"
+    ]
+
+    deadline = time.time() + 5
+
+    while time.time() < deadline:
+
+        state = server.task_status(
+            server_session_id,
+            failed_id,
+        )
+
+        if state.status in {
+            "completed",
+            "failed",
+            "cancelled",
+        }:
+            break
+
+        time.sleep(0.01)
+
+    assert state.status == "failed"
+
+    assert (
+        "controlled failure"
+        in state.data["error"]
+    )
+
+    results.append("failure")
+
+    # --------------------------------------------------------
+    # No false success
+    # --------------------------------------------------------
+
+    def none_executor(command, task):
+        return None
+
+    none_result = server.execute(
+        server_session_id,
+        "none",
+        executor=none_executor,
+    )
+
+    none_id = none_result.data[
+        "task_id"
+    ]
+
+    deadline = time.time() + 5
+
+    while time.time() < deadline:
+
+        none_state = server.task_status(
+            server_session_id,
+            none_id,
+        )
+
+        if none_state.status in {
+            "completed",
+            "failed",
+            "cancelled",
+        }:
+            break
+
+        time.sleep(0.01)
+
+    assert none_state.status == "failed"
+
+    results.append("no_false_success")
+
+    # --------------------------------------------------------
+    # Authorization protection
+    # --------------------------------------------------------
+
+    unauthorized = server.chat(
+        "invalid-session",
+        "hello",
+    )
+
+    assert not unauthorized.success
+    assert unauthorized.status == "unauthorized"
+
+    results.append("authorization")
+
+    # --------------------------------------------------------
+    # Input validation
+    # --------------------------------------------------------
+
+    invalid = server.execute(
+        server_session_id,
+        "",
+    )
+
+    assert not invalid.success
+    assert invalid.status == "invalid_input"
+
+    results.append("input_validation")
+
+    return {
+        "status": "PASSED",
+        "passed": len(results),
+        "tests": results,
     }

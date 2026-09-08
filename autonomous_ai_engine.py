@@ -2967,3 +2967,332 @@ def run_stage10_tests() -> bool:
 
     return True
 
+
+
+# =========================
+# STAGE 11 — REAL EXECUTION CORE
+# =========================
+
+import os as _os11
+import subprocess as _subprocess11
+import tempfile as _tempfile11
+import threading as _threading11
+import time as _time11
+from dataclasses import dataclass as _dataclass11
+from pathlib import Path as _Path11
+from typing import Optional as _Optional11, Sequence as _Sequence11
+import sys as _sys11
+
+
+class ExecutionStatus:
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    TIMEOUT = "TIMEOUT"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+
+
+@_dataclass11
+class ProcessResult:
+    status: str
+    exit_code: _Optional11[int]
+    stdout: str
+    stderr: str
+    command: str
+    duration: float
+
+    @property
+    def success(self):
+        return self.status == ExecutionStatus.COMPLETED and self.exit_code == 0
+
+
+class RealTerminal:
+    """Controlled real local-process execution layer."""
+
+    def __init__(self, workspace=None, timeout=120):
+        self.workspace = _Path11(workspace or _tempfile11.mkdtemp(prefix="khaled_exec_"))
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.timeout = timeout
+        self._process = None
+        self._lock = _threading11.Lock()
+
+    def run(self, command, timeout=None, cwd=None, shell=False):
+        if not command or not str(command).strip():
+            return ProcessResult(
+                ExecutionStatus.REJECTED, None, "", "EMPTY_COMMAND",
+                str(command), 0.0
+            )
+
+        workdir = _Path11(cwd or self.workspace)
+        if not workdir.exists():
+            return ProcessResult(
+                ExecutionStatus.REJECTED, None, "",
+                "WORKSPACE_NOT_FOUND", str(command), 0.0
+            )
+
+        limit = timeout if timeout is not None else self.timeout
+        started = _time11.time()
+
+        try:
+            with self._lock:
+                self._process = _subprocess11.Popen(
+                    command,
+                    cwd=str(workdir),
+                    shell=shell,
+                    stdout=_subprocess11.PIPE,
+                    stderr=_subprocess11.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace"
+                )
+
+            stdout, stderr = self._process.communicate(timeout=limit)
+            code = self._process.returncode
+
+            status = (
+                ExecutionStatus.COMPLETED
+                if code == 0
+                else ExecutionStatus.FAILED
+            )
+
+            return ProcessResult(
+                status, code, stdout, stderr,
+                str(command), _time11.time() - started
+            )
+
+        except _subprocess11.TimeoutExpired:
+            self.cancel()
+            return ProcessResult(
+                ExecutionStatus.TIMEOUT,
+                None,
+                "",
+                "PROCESS_TIMEOUT",
+                str(command),
+                _time11.time() - started
+            )
+
+        except Exception as exc:
+            return ProcessResult(
+                ExecutionStatus.FAILED,
+                None,
+                "",
+                f"{type(exc).__name__}: {exc}",
+                str(command),
+                _time11.time() - started
+            )
+
+        finally:
+            with self._lock:
+                self._process = None
+
+    def cancel(self):
+        with self._lock:
+            process = self._process
+
+        if process is not None and process.poll() is None:
+            try:
+                process.kill()
+                process.wait(timeout=5)
+                return True
+            except Exception:
+                return False
+
+        return False
+
+
+class SandboxFilesystem:
+    """Workspace-restricted filesystem operations."""
+
+    def __init__(self, workspace):
+        self.workspace = _Path11(workspace).resolve()
+        self.workspace.mkdir(parents=True, exist_ok=True)
+
+    def resolve(self, relative_path):
+        target = (self.workspace / relative_path).resolve()
+        try:
+            target.relative_to(self.workspace)
+        except ValueError:
+            raise PermissionError("PATH_OUTSIDE_SANDBOX")
+        return target
+
+    def write(self, relative_path, content):
+        target = self.resolve(relative_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(str(content), encoding="utf-8")
+        return target
+
+    def read(self, relative_path):
+        return self.resolve(relative_path).read_text(encoding="utf-8")
+
+    def exists(self, relative_path):
+        return self.resolve(relative_path).exists()
+
+    def list(self, relative_path="."):
+        target = self.resolve(relative_path)
+        return [p.name for p in target.iterdir()]
+
+
+class RealExecutionLayer:
+    """Unified real execution interface for KHALED."""
+
+    def __init__(self, workspace=None, timeout=120):
+        self.workspace = _Path11(
+            workspace or _tempfile11.mkdtemp(prefix="khaled_runtime_")
+        ).resolve()
+        self.workspace.mkdir(parents=True, exist_ok=True)
+
+        self.files = SandboxFilesystem(self.workspace)
+        self.terminal = RealTerminal(self.workspace, timeout=timeout)
+
+    def execute(self, command, timeout=None, shell=False):
+        return self.terminal.run(
+            command,
+            timeout=timeout,
+            cwd=self.workspace,
+            shell=shell
+        )
+
+    def write_file(self, path, content):
+        return self.files.write(path, content)
+
+    def read_file(self, path):
+        return self.files.read(path)
+
+    def list_files(self, path="."):
+        return self.files.list(path)
+
+    def cancel(self):
+        return self.terminal.cancel()
+
+    def cleanup(self):
+        import shutil as _cleanup_shutil
+        _cleanup_shutil.rmtree(
+            self.workspace,
+            ignore_errors=True
+        )
+
+
+def run_stage11_tests():
+    # Self-contained imports: this test must not depend on Colab globals.
+    import sys as _test_sys
+    import tempfile as _test_tempfile
+    import shutil as _test_shutil
+    import py_compile as _test_py_compile
+    from pathlib import Path as _test_Path
+
+    # Locate the current engine source independently.
+    _test_engine = _test_Path(__file__).resolve()
+
+    # 1. Compile the actual engine file.
+    _test_py_compile.compile(
+        str(_test_engine),
+        doraise=True
+    )
+
+    # 2. Create isolated execution workspace.
+    _test_workspace = _test_Path(
+        _test_tempfile.mkdtemp(prefix="khaled_stage11_test_")
+    )
+
+    try:
+        runtime = RealExecutionLayer(
+            workspace=_test_workspace,
+            timeout=10
+        )
+
+        # 3. Filesystem write/read.
+        runtime.write_file(
+            "hello.txt",
+            "KHALED_STAGE11"
+        )
+
+        assert runtime.read_file("hello.txt") == "KHALED_STAGE11"
+        assert "hello.txt" in runtime.list_files()
+
+        # 4. Real process execution.
+        result = runtime.execute(
+            [
+                _test_sys.executable,
+                "-c",
+                "print('KHALED_EXECUTION_OK')"
+            ]
+        )
+
+        assert result.success
+        assert "KHALED_EXECUTION_OK" in result.stdout
+
+        # 5. Non-zero process must be detected as failure.
+        failed = runtime.execute(
+            [
+                _test_sys.executable,
+                "-c",
+                "import sys; sys.exit(7)"
+            ]
+        )
+
+        assert failed.status == ExecutionStatus.FAILED
+        assert failed.exit_code == 7
+        assert not failed.success
+
+        # 6. Timeout protection.
+        timed = runtime.execute(
+            [
+                _test_sys.executable,
+                "-c",
+                "import time; time.sleep(5)"
+            ],
+            timeout=0.2
+        )
+
+        assert timed.status == ExecutionStatus.TIMEOUT
+        assert not timed.success
+
+        # 7. Sandbox path escape protection.
+        try:
+            runtime.files.resolve("../outside")
+            raise AssertionError(
+                "SANDBOX_ESCAPE_NOT_BLOCKED"
+            )
+        except PermissionError:
+            pass
+
+        # 8. Empty command rejection.
+        rejected = runtime.execute("")
+        assert rejected.status == ExecutionStatus.REJECTED
+        assert not rejected.success
+
+        # 9. End-to-end file -> process -> output.
+        runtime.write_file(
+            "e2e.py",
+            "print('KHALED_END_TO_END_OK')"
+        )
+
+        e2e = runtime.execute(
+            [
+                _test_sys.executable,
+                "e2e.py"
+            ]
+        )
+
+        assert e2e.success
+        assert "KHALED_END_TO_END_OK" in e2e.stdout
+
+        # 10. Result contract.
+        assert hasattr(result, "status")
+        assert hasattr(result, "exit_code")
+        assert hasattr(result, "stdout")
+        assert hasattr(result, "stderr")
+        assert hasattr(result, "command")
+        assert hasattr(result, "duration")
+
+        runtime.cleanup()
+
+        return True
+
+    finally:
+        # Ensure the test workspace cannot leak into the environment.
+        _test_shutil.rmtree(
+            _test_workspace,
+            ignore_errors=True
+        )
+

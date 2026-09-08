@@ -6281,3 +6281,925 @@ def run_stage15_tests():
         "chat_management": "VERIFIED",
     }
 
+
+
+
+# ============================================================
+# KHALED — STAGE 16
+# AUTONOMOUS PRODUCTION CORE
+# ============================================================
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional
+import time
+import uuid
+
+
+class ProductionPhase(str, Enum):
+    PLANNING = "planning"
+    EXECUTING = "executing"
+    TESTING = "testing"
+    DIAGNOSING = "diagnosing"
+    REPAIRING = "repairing"
+    VERIFYING = "verifying"
+    PERSISTING = "persisting"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ProductionOutcome(str, Enum):
+    SUCCESS = "success"
+    FAILURE = "failure"
+    BLOCKED = "blocked"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class ProductionEvidence:
+    evidence_id: str
+    phase: ProductionPhase
+    success: bool
+    message: str
+    data: Dict[str, Any] = field(
+        default_factory=dict
+    )
+    timestamp: float = field(
+        default_factory=time.time
+    )
+
+
+@dataclass
+class ProductionAttempt:
+    attempt: int
+    phase: ProductionPhase
+    success: bool
+    message: str
+    result: Any = None
+    error: Optional[str] = None
+    started_at: float = field(
+        default_factory=time.time
+    )
+    finished_at: Optional[float] = None
+
+
+@dataclass
+class ProductionRun:
+    run_id: str
+    command: str
+    outcome: ProductionOutcome
+    phase: ProductionPhase
+    attempts: List[ProductionAttempt] = field(
+        default_factory=list
+    )
+    evidence: List[ProductionEvidence] = field(
+        default_factory=list
+    )
+    result: Any = None
+    error: Optional[str] = None
+    started_at: float = field(
+        default_factory=time.time
+    )
+    finished_at: Optional[float] = None
+
+
+class ProductionEvidenceStore:
+    """
+    Evidence is the source of truth for autonomous success.
+    """
+
+    def __init__(self):
+        self._runs: Dict[
+            str,
+            ProductionRun
+        ] = {}
+
+    def save(
+        self,
+        run: ProductionRun
+    ) -> ProductionRun:
+
+        self._runs[run.run_id] = run
+
+        return run
+
+    def get(
+        self,
+        run_id: str
+    ) -> Optional[ProductionRun]:
+
+        return self._runs.get(run_id)
+
+    def count(self) -> int:
+
+        return len(self._runs)
+
+    def add_evidence(
+        self,
+        run_id: str,
+        phase: ProductionPhase,
+        success: bool,
+        message: str,
+        data: Optional[Dict[str, Any]] = None
+    ) -> ProductionEvidence:
+
+        run = self.get(run_id)
+
+        if run is None:
+            raise ValueError(
+                "RUN_NOT_FOUND"
+            )
+
+        evidence = ProductionEvidence(
+            evidence_id=str(uuid.uuid4()),
+            phase=phase,
+            success=success,
+            message=message,
+            data=data or {},
+        )
+
+        run.evidence.append(
+            evidence
+        )
+
+        return evidence
+
+
+class AutonomousProductionCore:
+    """
+    Deterministic orchestration layer.
+
+    The core never treats a non-None result alone as proof
+    of production success. Verification must succeed.
+    """
+
+    def __init__(
+        self,
+        engine=None,
+        max_attempts: int = 3
+    ):
+
+        if max_attempts < 1:
+            raise ValueError(
+                "INVALID_MAX_ATTEMPTS"
+            )
+
+        self.engine = engine
+        self.max_attempts = max_attempts
+
+        self.evidence = (
+            ProductionEvidenceStore()
+        )
+
+        self._cancelled = set()
+
+    # --------------------------------------------------------
+    # Cancellation
+    # --------------------------------------------------------
+
+    def cancel(
+        self,
+        run_id: str
+    ) -> bool:
+
+        self._cancelled.add(run_id)
+
+        run = self.evidence.get(
+            run_id
+        )
+
+        if run is not None:
+
+            run.outcome = (
+                ProductionOutcome.CANCELLED
+            )
+
+        return True
+
+    def is_cancelled(
+        self,
+        run_id: str
+    ) -> bool:
+
+        return run_id in self._cancelled
+
+    # --------------------------------------------------------
+    # Internal phase execution
+    # --------------------------------------------------------
+
+    def _phase(
+        self,
+        run: ProductionRun,
+        phase: ProductionPhase,
+        function: Callable[[], Any]
+    ) -> Any:
+
+        run.phase = phase
+
+        attempt_number = len(
+            run.attempts
+        ) + 1
+
+        attempt = ProductionAttempt(
+            attempt=attempt_number,
+            phase=phase,
+            success=False,
+            message="started",
+        )
+
+        run.attempts.append(
+            attempt
+        )
+
+        if self.is_cancelled(
+            run.run_id
+        ):
+
+            attempt.message = (
+                "cancelled"
+            )
+
+            attempt.error = (
+                "RUN_CANCELLED"
+            )
+
+            attempt.finished_at = time.time()
+
+            self.evidence.add_evidence(
+                run.run_id,
+                phase,
+                False,
+                "Phase cancelled",
+                {"attempt": attempt_number},
+            )
+
+            raise RuntimeError(
+                "RUN_CANCELLED"
+            )
+
+        try:
+
+            result = function()
+
+            if result is None:
+                raise RuntimeError(
+                    "NO_RESULT"
+                )
+
+            attempt.success = True
+            attempt.message = "passed"
+            attempt.result = result
+            attempt.finished_at = time.time()
+
+            self.evidence.add_evidence(
+                run.run_id,
+                phase,
+                True,
+                "Phase passed",
+                {
+                    "attempt":
+                        attempt_number
+                },
+            )
+
+            return result
+
+        except Exception as exc:
+
+            attempt.success = False
+            attempt.message = "failed"
+            attempt.error = str(exc)
+            attempt.finished_at = time.time()
+
+            self.evidence.add_evidence(
+                run.run_id,
+                phase,
+                False,
+                "Phase failed",
+                {
+                    "attempt":
+                        attempt_number,
+                    "error":
+                        str(exc),
+                },
+            )
+
+            raise
+
+    # --------------------------------------------------------
+    # Main autonomous cycle
+    # --------------------------------------------------------
+
+    def run(
+        self,
+        command: str,
+        planner: Optional[
+            Callable[[str], Any]
+        ] = None,
+        executor: Optional[
+            Callable[[Any], Any]
+        ] = None,
+        tester: Optional[
+            Callable[[Any], Any]
+        ] = None,
+        diagnostician: Optional[
+            Callable[[Any, Exception], Any]
+        ] = None,
+        repairer: Optional[
+            Callable[[Any, Any], Any]
+        ] = None,
+        verifier: Optional[
+            Callable[[Any], bool]
+        ] = None,
+        persister: Optional[
+            Callable[[Any], Any]
+        ] = None,
+    ) -> ProductionRun:
+
+        if not isinstance(
+            command,
+            str
+        ):
+            raise ValueError(
+                "COMMAND_MUST_BE_STRING"
+            )
+
+        if not command.strip():
+            raise ValueError(
+                "EMPTY_COMMAND"
+            )
+
+        run = ProductionRun(
+            run_id=str(uuid.uuid4()),
+            command=command.strip(),
+            outcome=ProductionOutcome.FAILURE,
+            phase=ProductionPhase.PLANNING,
+        )
+
+        self.evidence.save(run)
+
+        plan = None
+        execution = None
+        test_result = None
+        diagnosis = None
+        repaired = False
+
+        # ----------------------------------------------------
+        # Planning
+        # ----------------------------------------------------
+
+        try:
+
+            plan = self._phase(
+                run,
+                ProductionPhase.PLANNING,
+                lambda: (
+                    planner(command)
+                    if planner is not None
+                    else {
+                        "command":
+                            command,
+                        "planned":
+                            True,
+                    }
+                )
+            )
+
+        except Exception as exc:
+
+            run.error = str(exc)
+            run.outcome = (
+                ProductionOutcome.FAILURE
+            )
+            run.finished_at = time.time()
+
+            self.evidence.save(run)
+
+            return run
+
+        # ----------------------------------------------------
+        # Execute → Test → Diagnose → Repair
+        # ----------------------------------------------------
+
+        for cycle in range(
+            self.max_attempts
+        ):
+
+            if self.is_cancelled(
+                run.run_id
+            ):
+
+                run.error = "RUN_CANCELLED"
+                run.outcome = (
+                    ProductionOutcome.CANCELLED
+                )
+                run.finished_at = time.time()
+
+                self.evidence.save(run)
+
+                return run
+
+            try:
+
+                execution = self._phase(
+                    run,
+                    ProductionPhase.EXECUTING,
+                    lambda: (
+                        executor(plan)
+                        if executor is not None
+                        else plan
+                    )
+                )
+
+                test_result = self._phase(
+                    run,
+                    ProductionPhase.TESTING,
+                    lambda: (
+                        tester(execution)
+                        if tester is not None
+                        else True
+                    )
+                )
+
+                if test_result is False:
+
+                    raise RuntimeError(
+                        "TEST_FAILED"
+                    )
+
+                break
+
+            except Exception as exc:
+
+                if cycle >= (
+                    self.max_attempts - 1
+                ):
+
+                    run.error = str(exc)
+
+                    run.outcome = (
+                        ProductionOutcome.FAILURE
+                    )
+
+                    run.finished_at = time.time()
+
+                    self.evidence.save(run)
+
+                    return run
+
+                # --------------------------------------------
+                # Diagnose
+                # --------------------------------------------
+
+                try:
+
+                    diagnosis = self._phase(
+                        run,
+                        ProductionPhase.DIAGNOSING,
+                        lambda: (
+                            diagnostician(
+                                execution,
+                                exc
+                            )
+                            if diagnostician is not None
+                            else {
+                                "error":
+                                    str(exc),
+                                "repairable":
+                                    True,
+                            }
+                        )
+                    )
+
+                except Exception as diag_exc:
+
+                    run.error = str(
+                        diag_exc
+                    )
+
+                    run.outcome = (
+                        ProductionOutcome.FAILURE
+                    )
+
+                    run.finished_at = time.time()
+
+                    self.evidence.save(run)
+
+                    return run
+
+                repairable = True
+
+                if isinstance(
+                    diagnosis,
+                    dict
+                ):
+
+                    repairable = bool(
+                        diagnosis.get(
+                            "repairable",
+                            True
+                        )
+                    )
+
+                if not repairable:
+
+                    run.error = str(exc)
+
+                    run.outcome = (
+                        ProductionOutcome.FAILURE
+                    )
+
+                    run.finished_at = time.time()
+
+                    self.evidence.save(run)
+
+                    return run
+
+                # --------------------------------------------
+                # Repair
+                # --------------------------------------------
+
+                try:
+
+                    execution = self._phase(
+                        run,
+                        ProductionPhase.REPAIRING,
+                        lambda: (
+                            repairer(
+                                execution,
+                                diagnosis
+                            )
+                            if repairer is not None
+                            else execution
+                        )
+                    )
+
+                    repaired = True
+
+                except Exception as repair_exc:
+
+                    run.error = str(
+                        repair_exc
+                    )
+
+                    run.outcome = (
+                        ProductionOutcome.FAILURE
+                    )
+
+                    run.finished_at = time.time()
+
+                    self.evidence.save(run)
+
+                    return run
+
+        # ----------------------------------------------------
+        # Verification
+        # ----------------------------------------------------
+
+        try:
+
+            verified = self._phase(
+                run,
+                ProductionPhase.VERIFYING,
+                lambda: (
+                    verifier(execution)
+                    if verifier is not None
+                    else bool(
+                        test_result
+                    )
+                )
+            )
+
+            if verified is not True:
+
+                raise RuntimeError(
+                    "VERIFICATION_FAILED"
+                )
+
+        except Exception as exc:
+
+            run.error = str(exc)
+
+            run.outcome = (
+                ProductionOutcome.FAILURE
+            )
+
+            run.finished_at = time.time()
+
+            self.evidence.save(run)
+
+            return run
+
+        # ----------------------------------------------------
+        # Persistence
+        # ----------------------------------------------------
+
+        try:
+
+            persisted = self._phase(
+                run,
+                ProductionPhase.PERSISTING,
+                lambda: (
+                    persister(execution)
+                    if persister is not None
+                    else {
+                        "persisted":
+                            True
+                    }
+                )
+            )
+
+        except Exception as exc:
+
+            run.error = str(exc)
+
+            run.outcome = (
+                ProductionOutcome.FAILURE
+            )
+
+            run.finished_at = time.time()
+
+            self.evidence.save(run)
+
+            return run
+
+        # ----------------------------------------------------
+        # SUCCESS
+        # ----------------------------------------------------
+
+        run.phase = ProductionPhase.COMPLETED
+
+        run.outcome = (
+            ProductionOutcome.SUCCESS
+        )
+
+        run.result = {
+            "execution":
+                execution,
+            "test":
+                test_result,
+            "repaired":
+                repaired,
+            "persisted":
+                persisted,
+        }
+
+        run.finished_at = time.time()
+
+        self.evidence.add_evidence(
+            run.run_id,
+            ProductionPhase.COMPLETED,
+            True,
+            "Autonomous production cycle verified",
+            {
+                "repaired":
+                    repaired
+            },
+        )
+
+        self.evidence.save(run)
+
+        return run
+
+
+def run_stage16_tests():
+
+    core = AutonomousProductionCore(
+        max_attempts=3
+    )
+
+    # --------------------------------------------------------
+    # Successful deterministic cycle
+    # --------------------------------------------------------
+
+    result = core.run(
+        "build project",
+        planner=lambda command: {
+            "command":
+                command,
+            "planned":
+                True,
+        },
+        executor=lambda plan: {
+            "executed":
+                True,
+            "plan":
+                plan,
+        },
+        tester=lambda execution: True,
+        verifier=lambda execution: True,
+        persister=lambda execution: {
+            "saved":
+                True
+        },
+    )
+
+    assert result.outcome == (
+        ProductionOutcome.SUCCESS
+    )
+
+    assert result.phase == (
+        ProductionPhase.COMPLETED
+    )
+
+    assert result.result is not None
+
+    assert len(
+        result.evidence
+    ) >= 6
+
+    # --------------------------------------------------------
+    # Failure → diagnosis → repair → recovery
+    # --------------------------------------------------------
+
+    attempts = {
+        "count": 0
+    }
+
+    def failing_executor(plan):
+
+        attempts["count"] += 1
+
+        if attempts["count"] == 1:
+
+            raise RuntimeError(
+                "FIRST_EXECUTION_FAILURE"
+            )
+
+        return {
+            "fixed":
+                True
+        }
+
+    repaired = {
+        "value":
+            False
+    }
+
+    def repair(execution, diagnosis):
+
+        repaired["value"] = True
+
+        return {
+            "fixed":
+                True
+        }
+
+    recovery = core.run(
+        "repair project",
+        planner=lambda command: {
+            "command":
+                command
+        },
+        executor=failing_executor,
+        tester=lambda execution: True,
+        diagnostician=lambda execution, error: {
+            "error":
+                str(error),
+            "repairable":
+                True,
+        },
+        repairer=repair,
+        verifier=lambda execution: True,
+        persister=lambda execution: {
+            "saved":
+                True
+        },
+    )
+
+    assert recovery.outcome == (
+        ProductionOutcome.SUCCESS
+    )
+
+    assert repaired["value"] is True
+
+    assert attempts["count"] == 2
+
+    # --------------------------------------------------------
+    # Verification must prevent false success
+    # --------------------------------------------------------
+
+    failed_verification = core.run(
+        "unsafe success",
+        executor=lambda plan: {
+            "result":
+                "looks good"
+        },
+        tester=lambda execution: True,
+        verifier=lambda execution: False,
+    )
+
+    assert failed_verification.outcome == (
+        ProductionOutcome.FAILURE
+    )
+
+    assert failed_verification.error == (
+        "VERIFICATION_FAILED"
+    )
+
+    # --------------------------------------------------------
+    # Persistence failure must prevent success
+    # --------------------------------------------------------
+
+    persistence_failure = core.run(
+        "persistence failure",
+        executor=lambda plan: {
+            "result":
+                True
+        },
+        tester=lambda execution: True,
+        verifier=lambda execution: True,
+        persister=lambda execution: None,
+    )
+
+    assert persistence_failure.outcome == (
+        ProductionOutcome.FAILURE
+    )
+
+    # --------------------------------------------------------
+    # Empty input protection
+    # --------------------------------------------------------
+
+    try:
+
+        core.run("")
+
+        raise AssertionError(
+            "EMPTY_COMMAND_NOT_BLOCKED"
+        )
+
+    except ValueError as exc:
+
+        assert str(exc) == (
+            "EMPTY_COMMAND"
+        )
+
+    # --------------------------------------------------------
+    # Cancellation
+    # --------------------------------------------------------
+
+    cancelled = core.run(
+        "cancel test",
+        planner=lambda command: {
+            "command":
+                command
+        },
+        executor=lambda plan: {
+            "ok":
+                True
+        },
+        tester=lambda execution: True,
+        verifier=lambda execution: True,
+        persister=lambda execution: {
+            "saved":
+                True
+        },
+    )
+
+    assert cancelled.outcome == (
+        ProductionOutcome.SUCCESS
+    )
+
+    assert core.cancel(
+        cancelled.run_id
+    ) is True
+
+    assert core.is_cancelled(
+        cancelled.run_id
+    ) is True
+
+    # --------------------------------------------------------
+    # Evidence store
+    # --------------------------------------------------------
+
+    assert core.evidence.count() >= 4
+
+    assert core.evidence.get(
+        result.run_id
+    ) is result
+
+    return {
+        "planning":
+            "VERIFIED",
+        "execution":
+            "VERIFIED",
+        "testing":
+            "VERIFIED",
+        "diagnosis":
+            "VERIFIED",
+        "repair":
+            "VERIFIED",
+        "verification":
+            "VERIFIED",
+        "persistence":
+            "VERIFIED",
+        "recovery":
+            "VERIFIED",
+        "no_false_success":
+            "VERIFIED",
+        "cancellation":
+            "VERIFIED",
+        "evidence":
+            "VERIFIED",
+    }
+

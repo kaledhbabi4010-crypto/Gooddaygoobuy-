@@ -5543,3 +5543,741 @@ def run_stage14_tests() -> Dict[str, Any]:
         "passed": len(results),
         "tests": results,
     }
+
+
+
+# ============================================================
+# KHALED — STAGE 15
+# MOBILE CHAT CORE
+# ============================================================
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional
+import time
+import uuid
+
+
+class MobileMessageRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+
+class MobileTaskState(str, Enum):
+    IDLE = "idle"
+    QUEUED = "queued"
+    RUNNING = "running"
+    STREAMING = "streaming"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class MobileFile:
+    name: str
+    path: str
+    size: int = 0
+    mime_type: str = "application/octet-stream"
+
+
+@dataclass
+class MobileMessage:
+    message_id: str
+    role: MobileMessageRole
+    content: str
+    timestamp: float = field(default_factory=time.time)
+    files: List[MobileFile] = field(default_factory=list)
+    task_id: Optional[str] = None
+    state: MobileTaskState = MobileTaskState.COMPLETED
+
+
+@dataclass
+class MobileExecutionState:
+    task_id: str
+    state: MobileTaskState
+    progress: Optional[float] = None
+    message: str = ""
+    result: Any = None
+    error: Optional[str] = None
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+
+
+@dataclass
+class MobileSession:
+    session_id: str
+    title: str = "New Chat"
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+    messages: List[MobileMessage] = field(default_factory=list)
+    executions: Dict[str, MobileExecutionState] = field(
+        default_factory=dict
+    )
+
+
+@dataclass
+class MobileChatResponse:
+    session_id: str
+    message_id: str
+    task_id: Optional[str]
+    state: MobileTaskState
+    content: str
+    error: Optional[str] = None
+
+
+class MobileChatHistory:
+    """
+    Lightweight in-memory mobile chat history.
+
+    The persistence layer can be replaced later without
+    changing the mobile chat API.
+    """
+
+    def __init__(self):
+        self._sessions: Dict[str, MobileSession] = {}
+
+    def create_session(
+        self,
+        title: str = "New Chat"
+    ) -> MobileSession:
+
+        session = MobileSession(
+            session_id=str(uuid.uuid4()),
+            title=title or "New Chat",
+        )
+
+        self._sessions[session.session_id] = session
+
+        return session
+
+    def get_session(
+        self,
+        session_id: str
+    ) -> Optional[MobileSession]:
+
+        return self._sessions.get(session_id)
+
+    def delete_session(
+        self,
+        session_id: str
+    ) -> bool:
+
+        return self._sessions.pop(
+            session_id,
+            None
+        ) is not None
+
+    def list_sessions(self) -> List[MobileSession]:
+
+        return sorted(
+            self._sessions.values(),
+            key=lambda item: item.updated_at,
+            reverse=True,
+        )
+
+    def add_message(
+        self,
+        session_id: str,
+        message: MobileMessage
+    ) -> MobileMessage:
+
+        session = self.get_session(session_id)
+
+        if session is None:
+            raise ValueError(
+                "SESSION_NOT_FOUND"
+            )
+
+        session.messages.append(message)
+        session.updated_at = time.time()
+
+        if (
+            session.title == "New Chat"
+            and message.role == MobileMessageRole.USER
+            and message.content.strip()
+        ):
+            session.title = (
+                message.content.strip()[:40]
+            )
+
+        return message
+
+
+class MobileStreamingBuffer:
+    """
+    Small streaming buffer used by the mobile UI.
+
+    It does not require a real external LLM.
+    """
+
+    def __init__(self):
+        self._buffers: Dict[str, str] = {}
+
+    def start(
+        self,
+        task_id: str
+    ) -> None:
+
+        self._buffers[task_id] = ""
+
+    def append(
+        self,
+        task_id: str,
+        chunk: str
+    ) -> str:
+
+        if task_id not in self._buffers:
+            self.start(task_id)
+
+        self._buffers[task_id] += str(chunk)
+
+        return self._buffers[task_id]
+
+    def get(
+        self,
+        task_id: str
+    ) -> str:
+
+        return self._buffers.get(
+            task_id,
+            ""
+        )
+
+    def finish(
+        self,
+        task_id: str
+    ) -> str:
+
+        return self.get(task_id)
+
+    def clear(
+        self,
+        task_id: str
+    ) -> None:
+
+        self._buffers.pop(
+            task_id,
+            None
+        )
+
+
+class MobileChatCore:
+    """
+    Mobile-first chat facade over AgentServerCore.
+
+    Transport/UI independent:
+    - Android UI
+    - Web UI
+    - PWA
+    - future native application
+
+    can all use the same core.
+    """
+
+    def __init__(
+        self,
+        agent_server=None,
+        engine=None
+    ):
+
+        self.agent_server = agent_server
+        self.engine = engine
+
+        self.history = MobileChatHistory()
+        self.streaming = MobileStreamingBuffer()
+
+        self._active_tasks: Dict[
+            str,
+            MobileExecutionState
+        ] = {}
+
+    # --------------------------------------------------------
+    # Session API
+    # --------------------------------------------------------
+
+    def create_chat(
+        self,
+        title: str = "New Chat"
+    ) -> MobileSession:
+
+        return self.history.create_session(title)
+
+    def get_chat(
+        self,
+        session_id: str
+    ) -> Optional[MobileSession]:
+
+        return self.history.get_session(session_id)
+
+    def list_chats(self) -> List[MobileSession]:
+
+        return self.history.list_sessions()
+
+    def delete_chat(
+        self,
+        session_id: str
+    ) -> bool:
+
+        return self.history.delete_session(
+            session_id
+        )
+
+    # --------------------------------------------------------
+    # User message
+    # --------------------------------------------------------
+
+    def add_user_message(
+        self,
+        session_id: str,
+        content: str,
+        files: Optional[List[MobileFile]] = None
+    ) -> MobileMessage:
+
+        if not isinstance(content, str):
+            raise ValueError(
+                "MESSAGE_MUST_BE_STRING"
+            )
+
+        if not content.strip() and not files:
+            raise ValueError(
+                "EMPTY_MESSAGE"
+            )
+
+        message = MobileMessage(
+            message_id=str(uuid.uuid4()),
+            role=MobileMessageRole.USER,
+            content=content.strip(),
+            files=files or [],
+            state=MobileTaskState.COMPLETED,
+        )
+
+        return self.history.add_message(
+            session_id,
+            message
+        )
+
+    # --------------------------------------------------------
+    # Assistant message
+    # --------------------------------------------------------
+
+    def add_assistant_message(
+        self,
+        session_id: str,
+        content: str,
+        task_id: Optional[str] = None,
+        state: MobileTaskState =
+            MobileTaskState.COMPLETED
+    ) -> MobileMessage:
+
+        message = MobileMessage(
+            message_id=str(uuid.uuid4()),
+            role=MobileMessageRole.ASSISTANT,
+            content=str(content),
+            task_id=task_id,
+            state=state,
+        )
+
+        return self.history.add_message(
+            session_id,
+            message
+        )
+
+    # --------------------------------------------------------
+    # Execution state
+    # --------------------------------------------------------
+
+    def start_execution(
+        self,
+        task_id: Optional[str] = None
+    ) -> MobileExecutionState:
+
+        task_id = task_id or str(uuid.uuid4())
+
+        state = MobileExecutionState(
+            task_id=task_id,
+            state=MobileTaskState.RUNNING,
+            started_at=time.time(),
+            message="Executing...",
+        )
+
+        self._active_tasks[task_id] = state
+
+        return state
+
+    def update_execution(
+        self,
+        task_id: str,
+        state: MobileTaskState,
+        message: str = "",
+        progress: Optional[float] = None,
+        result: Any = None,
+        error: Optional[str] = None
+    ) -> MobileExecutionState:
+
+        execution = self._active_tasks.get(
+            task_id
+        )
+
+        if execution is None:
+            execution = self.start_execution(
+                task_id
+            )
+
+        execution.state = state
+        execution.message = message
+        execution.progress = progress
+        execution.result = result
+        execution.error = error
+
+        if state in (
+            MobileTaskState.COMPLETED,
+            MobileTaskState.FAILED,
+            MobileTaskState.CANCELLED,
+        ):
+            execution.finished_at = time.time()
+
+        return execution
+
+    def get_execution(
+        self,
+        task_id: str
+    ) -> Optional[MobileExecutionState]:
+
+        return self._active_tasks.get(task_id)
+
+    # --------------------------------------------------------
+    # Streaming
+    # --------------------------------------------------------
+
+    def start_stream(
+        self,
+        task_id: str
+    ) -> None:
+
+        self.streaming.start(task_id)
+
+        self.update_execution(
+            task_id,
+            MobileTaskState.STREAMING,
+            message="Generating..."
+        )
+
+    def stream_chunk(
+        self,
+        task_id: str,
+        chunk: str
+    ) -> str:
+
+        text = self.streaming.append(
+            task_id,
+            chunk
+        )
+
+        self.update_execution(
+            task_id,
+            MobileTaskState.STREAMING,
+            message="Generating..."
+        )
+
+        return text
+
+    def finish_stream(
+        self,
+        task_id: str
+    ) -> str:
+
+        text = self.streaming.finish(
+            task_id
+        )
+
+        self.update_execution(
+            task_id,
+            MobileTaskState.COMPLETED,
+            message="Completed",
+            result=text,
+        )
+
+        return text
+
+    # --------------------------------------------------------
+    # High-level chat response
+    # --------------------------------------------------------
+
+    def build_response(
+        self,
+        session_id: str,
+        message_id: str,
+        task_id: Optional[str],
+        state: MobileTaskState,
+        content: str,
+        error: Optional[str] = None
+    ) -> MobileChatResponse:
+
+        return MobileChatResponse(
+            session_id=session_id,
+            message_id=message_id,
+            task_id=task_id,
+            state=state,
+            content=str(content),
+            error=error,
+        )
+
+    # --------------------------------------------------------
+    # UI state
+    # --------------------------------------------------------
+
+    def ui_state(
+        self,
+        session_id: str
+    ) -> Dict[str, Any]:
+
+        session = self.get_chat(
+            session_id
+        )
+
+        if session is None:
+            raise ValueError(
+                "SESSION_NOT_FOUND"
+            )
+
+        active = [
+            execution
+            for execution in
+            self._active_tasks.values()
+            if execution.state in (
+                MobileTaskState.QUEUED,
+                MobileTaskState.RUNNING,
+                MobileTaskState.STREAMING,
+            )
+        ]
+
+        return {
+            "session_id": session.session_id,
+            "title": session.title,
+            "message_count": len(
+                session.messages
+            ),
+            "active_execution_count": len(
+                active
+            ),
+            "messages": session.messages,
+            "executions": session.executions,
+        }
+
+
+def run_stage15_tests():
+
+    # --------------------------------------------------------
+    # Session
+    # --------------------------------------------------------
+
+    core = MobileChatCore()
+
+    session = core.create_chat()
+
+    assert session.session_id
+    assert session.title == "New Chat"
+
+    # --------------------------------------------------------
+    # User message
+    # --------------------------------------------------------
+
+    user_message = core.add_user_message(
+        session.session_id,
+        "Build my project"
+    )
+
+    assert user_message.role == (
+        MobileMessageRole.USER
+    )
+
+    assert user_message.content == (
+        "Build my project"
+    )
+
+    assert core.get_chat(
+        session.session_id
+    ).title == "Build my project"
+
+    # --------------------------------------------------------
+    # Files
+    # --------------------------------------------------------
+
+    attached = MobileFile(
+        name="test.py",
+        path="/tmp/test.py",
+        size=10,
+        mime_type="text/x-python",
+    )
+
+    file_message = core.add_user_message(
+        session.session_id,
+        "",
+        files=[attached],
+    )
+
+    assert len(file_message.files) == 1
+
+    # --------------------------------------------------------
+    # Assistant
+    # --------------------------------------------------------
+
+    assistant = core.add_assistant_message(
+        session.session_id,
+        "I am working on it."
+    )
+
+    assert assistant.role == (
+        MobileMessageRole.ASSISTANT
+    )
+
+    # --------------------------------------------------------
+    # Execution
+    # --------------------------------------------------------
+
+    execution = core.start_execution()
+
+    assert execution.task_id
+    assert execution.state == (
+        MobileTaskState.RUNNING
+    )
+
+    updated = core.update_execution(
+        execution.task_id,
+        MobileTaskState.COMPLETED,
+        message="Done",
+        result={"ok": True},
+    )
+
+    assert updated.state == (
+        MobileTaskState.COMPLETED
+    )
+
+    assert updated.result == {
+        "ok": True
+    }
+
+    assert updated.finished_at is not None
+
+    # --------------------------------------------------------
+    # Streaming
+    # --------------------------------------------------------
+
+    stream_task = str(uuid.uuid4())
+
+    core.start_stream(stream_task)
+
+    assert core.stream_chunk(
+        stream_task,
+        "Hello "
+    ) == "Hello "
+
+    assert core.stream_chunk(
+        stream_task,
+        "KHALED"
+    ) == "Hello KHALED"
+
+    streamed = core.finish_stream(
+        stream_task
+    )
+
+    assert streamed == "Hello KHALED"
+
+    assert core.get_execution(
+        stream_task
+    ).state == MobileTaskState.COMPLETED
+
+    # --------------------------------------------------------
+    # Response
+    # --------------------------------------------------------
+
+    response = core.build_response(
+        session.session_id,
+        assistant.message_id,
+        None,
+        MobileTaskState.COMPLETED,
+        "Done",
+    )
+
+    assert response.session_id == (
+        session.session_id
+    )
+
+    assert response.state == (
+        MobileTaskState.COMPLETED
+    )
+
+    # --------------------------------------------------------
+    # UI state
+    # --------------------------------------------------------
+
+    ui = core.ui_state(
+        session.session_id
+    )
+
+    assert ui["session_id"] == (
+        session.session_id
+    )
+
+    assert ui["message_count"] >= 3
+
+    # --------------------------------------------------------
+    # Validation
+    # --------------------------------------------------------
+
+    try:
+        core.add_user_message(
+            session.session_id,
+            ""
+        )
+        raise AssertionError(
+            "EMPTY_MESSAGE_NOT_BLOCKED"
+        )
+    except ValueError as exc:
+        assert str(exc) == "EMPTY_MESSAGE"
+
+    try:
+        core.add_user_message(
+            "missing-session",
+            "test"
+        )
+        raise AssertionError(
+            "MISSING_SESSION_NOT_BLOCKED"
+        )
+    except ValueError as exc:
+        assert str(exc) == "SESSION_NOT_FOUND"
+
+    # --------------------------------------------------------
+    # Chat management
+    # --------------------------------------------------------
+
+    second = core.create_chat(
+        "Second"
+    )
+
+    assert len(
+        core.list_chats()
+    ) == 2
+
+    assert core.delete_chat(
+        second.session_id
+    ) is True
+
+    assert core.get_chat(
+        second.session_id
+    ) is None
+
+    return {
+        "sessions": "VERIFIED",
+        "messages": "VERIFIED",
+        "files": "VERIFIED",
+        "execution_state": "VERIFIED",
+        "streaming": "VERIFIED",
+        "responses": "VERIFIED",
+        "ui_state": "VERIFIED",
+        "validation": "VERIFIED",
+        "chat_management": "VERIFIED",
+    }
+

@@ -640,3 +640,228 @@ def run_stage2_tests():
     assert p['steps'][0].action == 'understand'
     assert p['steps'][-1].action == 'verify'
     return True
+
+
+# ==================== STAGE_3_TOOLS ====================
+
+class ToolPermission:
+    READ = "READ"
+    WRITE = "WRITE"
+    EXECUTE = "EXECUTE"
+    NETWORK = "NETWORK"
+
+
+class ToolResult:
+    def __init__(self, success, output="", error="", metadata=None):
+        self.success = bool(success)
+        self.output = output
+        self.error = error
+        self.metadata = metadata or {}
+
+    def to_dict(self):
+        return {
+            "success": self.success,
+            "output": self.output,
+            "error": self.error,
+            "metadata": self.metadata,
+        }
+
+
+class ToolContext:
+    def __init__(self, workspace):
+        self.workspace = Path(workspace).resolve()
+        self.metadata = {}
+
+    def safe_path(self, path):
+        candidate = (self.workspace / path).resolve()
+
+        try:
+            candidate.relative_to(self.workspace)
+        except ValueError:
+            raise PermissionError("PATH_OUTSIDE_WORKSPACE")
+
+        return candidate
+
+
+class Tool:
+    name = "tool"
+    permissions = ()
+
+    def execute(self, context, **kwargs):
+        raise NotImplementedError
+
+
+class ToolRegistry:
+    def __init__(self):
+        self._tools = {}
+
+    def register(self, tool):
+        if not getattr(tool, "name", None):
+            raise ValueError("TOOL_NAME_REQUIRED")
+
+        self._tools[tool.name] = tool
+
+    def get(self, name):
+        return self._tools.get(name)
+
+    def list(self):
+        return sorted(self._tools.keys())
+
+
+class ToolGovernance:
+    def __init__(self):
+        self.denied = set()
+
+    def deny(self, tool_name):
+        self.denied.add(tool_name)
+
+    def allow(self, tool_name):
+        self.denied.discard(tool_name)
+
+    def can_execute(self, tool):
+        return tool.name not in self.denied
+
+
+class ReadFileTool(Tool):
+    name = "read_file"
+    permissions = (ToolPermission.READ,)
+
+    def execute(self, context, path):
+        target = context.safe_path(path)
+
+        if not target.exists():
+            return ToolResult(
+                False,
+                error="FILE_NOT_FOUND",
+                metadata={"path": str(target)}
+            )
+
+        if not target.is_file():
+            return ToolResult(
+                False,
+                error="NOT_A_FILE",
+                metadata={"path": str(target)}
+            )
+
+        return ToolResult(
+            True,
+            output=target.read_text(encoding="utf-8"),
+            metadata={"path": str(target)}
+        )
+
+
+class WriteFileTool(Tool):
+    name = "write_file"
+    permissions = (ToolPermission.WRITE,)
+
+    def execute(self, context, path, content):
+        target = context.safe_path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+        return ToolResult(
+            True,
+            output="FILE_WRITTEN",
+            metadata={
+                "path": str(target),
+                "bytes": target.stat().st_size,
+            }
+        )
+
+
+class ToolSystem:
+    def __init__(self, workspace):
+        self.context = ToolContext(workspace)
+        self.registry = ToolRegistry()
+        self.governance = ToolGovernance()
+
+        self.registry.register(ReadFileTool())
+        self.registry.register(WriteFileTool())
+
+    def execute(self, tool_name, **kwargs):
+        tool = self.registry.get(tool_name)
+
+        if tool is None:
+            return ToolResult(
+                False,
+                error="TOOL_NOT_FOUND",
+                metadata={"tool": tool_name}
+            )
+
+        if not self.governance.can_execute(tool):
+            return ToolResult(
+                False,
+                error="TOOL_DENIED",
+                metadata={"tool": tool_name}
+            )
+
+        try:
+            return tool.execute(self.context, **kwargs)
+        except PermissionError as exc:
+            return ToolResult(
+                False,
+                error=str(exc),
+                metadata={"tool": tool_name}
+            )
+        except Exception as exc:
+            return ToolResult(
+                False,
+                error=f"{type(exc).__name__}: {exc}",
+                metadata={"tool": tool_name}
+            )
+
+
+def run_stage3_tests():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        system = ToolSystem(tmp)
+
+        assert "read_file" in system.registry.list()
+        assert "write_file" in system.registry.list()
+
+        write = system.execute(
+            "write_file",
+            path="hello.txt",
+            content="KHALED STAGE 3"
+        )
+
+        assert write.success is True
+
+        read = system.execute(
+            "read_file",
+            path="hello.txt"
+        )
+
+        assert read.success is True
+        assert read.output == "KHALED STAGE 3"
+
+        missing = system.execute(
+            "read_file",
+            path="missing.txt"
+        )
+
+        assert missing.success is False
+        assert missing.error == "FILE_NOT_FOUND"
+
+        outside = system.execute(
+            "read_file",
+            path="../outside.txt"
+        )
+
+        assert outside.success is False
+        assert outside.error == "PATH_OUTSIDE_WORKSPACE"
+
+        system.governance.deny("read_file")
+
+        denied = system.execute(
+            "read_file",
+            path="hello.txt"
+        )
+
+        assert denied.success is False
+        assert denied.error == "TOOL_DENIED"
+
+    return True
+
+# ==================== END STAGE_3_TOOLS ====================

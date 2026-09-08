@@ -865,3 +865,108 @@ def run_stage3_tests():
     return True
 
 # ==================== END STAGE_3_TOOLS ====================
+
+# ===== STAGE_3_EXECUTION_LAYER =====
+class ToolExecutionError(Exception):
+    pass
+
+class ToolExecutionLayer:
+    def __init__(self, tool_system):
+        self.tool_system = tool_system
+        self.execution_count = 0
+
+    def execute(self, tool_name, context, **kwargs):
+        self.execution_count += 1
+
+        if not hasattr(self.tool_system, 'registry'):
+            raise ToolExecutionError('TOOL_REGISTRY_NOT_AVAILABLE')
+
+        tool = self.tool_system.registry.get(tool_name)
+        if tool is None:
+            raise ToolExecutionError(f'TOOL_NOT_FOUND:{tool_name}')
+
+        if hasattr(self.tool_system, 'governance'):
+            governance = self.tool_system.governance
+            if hasattr(governance, 'is_allowed'):
+                allowed = governance.is_allowed(tool, context)
+                if not allowed:
+                    raise ToolExecutionError(f'TOOL_NOT_ALLOWED:{tool_name}')
+
+        try:
+            if hasattr(tool, 'execute'):
+                result = tool.execute(context, **kwargs)
+            elif callable(tool):
+                result = tool(context, **kwargs)
+            else:
+                raise ToolExecutionError(f'TOOL_NOT_EXECUTABLE:{tool_name}')
+        except ToolExecutionError:
+            raise
+        except Exception as exc:
+            raise ToolExecutionError(
+                f'TOOL_EXECUTION_FAILED:{tool_name}:{type(exc).__name__}:{exc}'
+            ) from exc
+
+        if isinstance(result, ToolResult):
+            return result
+
+        return ToolResult(
+            success=True,
+            output=result,
+            tool_name=tool_name,
+        )
+
+    def execute_many(self, calls, context):
+        results = []
+        for call in calls:
+            name = call.get('tool_name')
+            kwargs = call.get('kwargs', {})
+            results.append(self.execute(name, context, **kwargs))
+        return results
+
+def run_stage3_execution_tests():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+
+        context = ToolContext(root)
+        system = ToolSystem(root)
+
+        if hasattr(system, 'register'):
+            try:
+                system.register(ReadFileTool())
+                system.register(WriteFileTool())
+            except TypeError:
+                pass
+
+        layer = ToolExecutionLayer(system)
+
+        write_result = layer.execute(
+            'write_file',
+            context,
+            path='execution_test.txt',
+            content='KHALED EXECUTION VERIFIED'
+        )
+
+        assert write_result.success is True
+        assert (root / 'execution_test.txt').read_text() == 'KHALED EXECUTION VERIFIED'
+
+        read_result = layer.execute(
+            'read_file',
+            context,
+            path='execution_test.txt'
+        )
+
+        assert read_result.success is True
+        assert read_result.output == 'KHALED EXECUTION VERIFIED'
+
+        try:
+            layer.execute(
+                'missing_tool',
+                context
+            )
+            raise AssertionError('MISSING_TOOL_NOT_BLOCKED')
+        except ToolExecutionError as exc:
+            assert 'TOOL_NOT_FOUND' in str(exc)
+
+        assert layer.execution_count == 3
+        return True
+

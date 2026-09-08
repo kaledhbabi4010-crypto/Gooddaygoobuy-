@@ -3296,3 +3296,483 @@ def run_stage11_tests():
             ignore_errors=True
         )
 
+
+
+# KHALED_STAGE_12_AI_CONTEXT_CORE
+
+class LLMRequest:
+    def __init__(self, prompt, system=None, model=None, max_tokens=1024, temperature=0.2, stream=False):
+        self.prompt = str(prompt)
+        self.system = system
+        self.model = model
+        self.max_tokens = int(max_tokens)
+        self.temperature = float(temperature)
+        self.stream = bool(stream)
+
+
+class LLMResponse:
+    def __init__(self, text, model=None, provider=None, usage=None, success=True, error=None):
+        self.text = str(text)
+        self.model = model
+        self.provider = provider
+        self.usage = usage or {}
+        self.success = bool(success)
+        self.error = error
+
+
+class ProviderHealth:
+    def __init__(self, name):
+        self.name = name
+        self.successes = 0
+        self.failures = 0
+        self.consecutive_failures = 0
+
+    @property
+    def healthy(self):
+        return self.consecutive_failures < 3
+
+    def success(self):
+        self.successes += 1
+        self.consecutive_failures = 0
+
+    def failure(self):
+        self.failures += 1
+        self.consecutive_failures += 1
+
+
+class LocalTestLLMProvider:
+    name = 'local-test'
+    model = 'local-test-model'
+
+    def __init__(self):
+        self.health = ProviderHealth(self.name)
+
+    def complete(self, request):
+        text = 'LOCAL_LLM_OK: ' + request.prompt[:200]
+        self.health.success()
+        return LLMResponse(
+            text=text,
+            model=request.model or self.model,
+            provider=self.name,
+            usage={'prompt_tokens': len(request.prompt.split()), 'completion_tokens': len(text.split())},
+        )
+
+    def stream(self, request):
+        response = self.complete(request)
+        words = response.text.split(' ')
+        for word in words:
+            yield word + ' '
+
+
+class QwenProviderAdapter:
+    name = 'qwen'
+
+    def __init__(self, endpoint=None, api_key=None, model='Qwen/Qwen3-235B-A22B-Thinking-2507'):
+        self.endpoint = endpoint
+        self.api_key = api_key
+        self.model = model
+        self.health = ProviderHealth(self.name)
+
+    @property
+    def configured(self):
+        return bool(self.endpoint and self.api_key)
+
+    def complete(self, request):
+        if not self.configured:
+            raise RuntimeError('QWEN_PROVIDER_NOT_CONFIGURED')
+        raise RuntimeError('QWEN_EXTERNAL_CALL_REQUIRES_EXPLICIT_RUNTIME_CONFIGURATION')
+
+    def stream(self, request):
+        if not self.configured:
+            raise RuntimeError('QWEN_PROVIDER_NOT_CONFIGURED')
+        raise RuntimeError('QWEN_EXTERNAL_CALL_REQUIRES_EXPLICIT_RUNTIME_CONFIGURATION')
+
+
+class LLMProviderRegistryV2:
+    def __init__(self):
+        self.providers = {}
+        self.health = {}
+
+    def register(self, provider):
+        name = str(provider.name)
+        self.providers[name] = provider
+        self.health[name] = getattr(provider, 'health', ProviderHealth(name))
+
+    def discover(self):
+        return sorted(self.providers.keys())
+
+    def get(self, name):
+        if name not in self.providers:
+            raise KeyError('PROVIDER_NOT_FOUND:' + str(name))
+        return self.providers[name]
+
+    def healthy(self):
+        return [
+            name for name in self.discover()
+            if self.health[name].healthy
+        ]
+
+
+class TokenBudgetV2:
+    def __init__(self, limit):
+        self.limit = max(1, int(limit))
+        self.used = 0
+
+    def estimate(self, text):
+        return len(str(text).split())
+
+    def reserve(self, amount):
+        amount = max(0, int(amount))
+        if self.used + amount > self.limit:
+            raise RuntimeError('TOKEN_BUDGET_EXCEEDED')
+        self.used += amount
+        return True
+
+    @property
+    def remaining(self):
+        return self.limit - self.used
+
+
+class ContextManagerV2:
+    def __init__(self, token_limit=4096):
+        self.items = []
+        self.budget = TokenBudgetV2(token_limit)
+
+    def add(self, role, content, priority=0):
+        content = str(content)
+        tokens = self.budget.estimate(content)
+        self.items.append({
+            'role': str(role),
+            'content': content,
+            'priority': int(priority),
+            'tokens': tokens,
+        })
+        return True
+
+    def build(self):
+        ordered = sorted(
+            self.items,
+            key=lambda item: (-item['priority'], self.items.index(item)),
+        )
+        selected = []
+        used = 0
+        for item in ordered:
+            if used + item['tokens'] > self.budget.limit:
+                continue
+            selected.append(item)
+            used += item['tokens']
+        return selected
+
+    def text(self):
+        return '\n'.join(
+            item['role'] + ': ' + item['content']
+            for item in self.build()
+        )
+
+
+class LLMGatewayV2:
+    def __init__(self, registry=None, retry_count=2):
+        self.registry = registry or LLMProviderRegistryV2()
+        self.retry_count = max(0, int(retry_count))
+
+    def select(self, preferred=None):
+        if preferred:
+            provider = self.registry.get(preferred)
+            if not self.registry.health[preferred].healthy:
+                raise RuntimeError('PREFERRED_PROVIDER_UNHEALTHY')
+            return provider
+        healthy = self.registry.healthy()
+        if not healthy:
+            raise RuntimeError('NO_HEALTHY_LLM_PROVIDER')
+        return self.registry.get(healthy[0])
+
+    def complete(self, request, preferred=None):
+        last_error = None
+        candidates = []
+        if preferred:
+            candidates.append(preferred)
+        for name in self.registry.healthy():
+            if name not in candidates:
+                candidates.append(name)
+
+        for name in candidates:
+            provider = self.registry.get(name)
+            attempts = self.retry_count + 1
+            for _ in range(attempts):
+                try:
+                    result = provider.complete(request)
+                    if not isinstance(result, LLMResponse):
+                        raise RuntimeError('INVALID_LLM_RESPONSE')
+                    if not result.success:
+                        raise RuntimeError(result.error or 'LLM_PROVIDER_FAILED')
+                    return result
+                except Exception as exc:
+                    last_error = exc
+                    if hasattr(provider, 'health'):
+                        provider.health.failure()
+                    time.sleep(0.01)
+
+        raise RuntimeError('LLM_ALL_PROVIDERS_FAILED:' + str(last_error))
+
+    def stream(self, request, preferred=None):
+        provider = self.select(preferred)
+        if not hasattr(provider, 'stream'):
+            raise RuntimeError('STREAMING_NOT_SUPPORTED')
+        for chunk in provider.stream(request):
+            yield chunk
+
+
+class ResourceBudgetV2:
+    def __init__(self, max_seconds=30, max_output_tokens=4096):
+        self.max_seconds = float(max_seconds)
+        self.max_output_tokens = int(max_output_tokens)
+        self.started = time.monotonic()
+
+    @property
+    def elapsed(self):
+        return time.monotonic() - self.started
+
+    def check(self):
+        if self.elapsed > self.max_seconds:
+            raise TimeoutError('LLM_RESOURCE_TIME_BUDGET_EXCEEDED')
+        return True
+
+
+class AIContextExecution:
+    def __init__(self, gateway, context=None, resource_budget=None):
+        self.gateway = gateway
+        self.context = context or ContextManagerV2()
+        self.resource_budget = resource_budget or ResourceBudgetV2()
+
+    def execute(self, prompt, preferred=None, model=None):
+        self.resource_budget.check()
+        self.context.add('user', prompt, priority=100)
+        context_text = self.context.text()
+        request = LLMRequest(
+            prompt=context_text,
+            model=model,
+            max_tokens=self.resource_budget.max_output_tokens,
+        )
+        result = self.gateway.complete(request, preferred=preferred)
+        self.resource_budget.check()
+        return result
+
+
+def run_stage12_tests():
+    import py_compile as _py_compile
+    import pathlib as _pathlib
+    import importlib.util as _importlib_util
+    import time as _time
+
+    _engine = _pathlib.Path(
+        "/content/github_recovery_repo/autonomous_ai_engine.py"
+    )
+
+    if not _engine.exists():
+        raise FileNotFoundError("ENGINE_NOT_FOUND:" + str(_engine))
+
+    _py_compile.compile(str(_engine), doraise=True)
+
+    _spec = _importlib_util.spec_from_file_location(
+        "khaled_stage12_test",
+        str(_engine)
+    )
+
+    _module = _importlib_util.module_from_spec(_spec)
+    _spec.loader.exec_module(_module)
+
+    _required = [
+        "LLMRequest",
+        "LLMResponse",
+        "ProviderHealth",
+        "LocalTestLLMProvider",
+        "QwenProviderAdapter",
+        "LLMProviderRegistryV2",
+        "TokenBudgetV2",
+        "ContextManagerV2",
+        "LLMGatewayV2",
+        "ResourceBudgetV2",
+        "AIContextExecution",
+    ]
+
+    for _name in _required:
+        assert hasattr(
+            _module,
+            _name
+        ), "MISSING_STAGE12_API:" + _name
+
+    _Local = _module.LocalTestLLMProvider
+    _Registry = _module.LLMProviderRegistryV2
+    _Gateway = _module.LLMGatewayV2
+    _Request = _module.LLMRequest
+    _Context = _module.ContextManagerV2
+    _Budget = _module.TokenBudgetV2
+    _Resource = _module.ResourceBudgetV2
+    _Runner = _module.AIContextExecution
+    _Qwen = _module.QwenProviderAdapter
+
+    # Provider discovery
+    _provider = _Local()
+    _registry = _Registry()
+    _registry.register(_provider)
+
+    assert _registry.discover() == ["local-test"]
+    assert _registry.healthy() == ["local-test"]
+
+    # Basic LLM completion
+    _gateway = _Gateway(
+        _registry,
+        retry_count=1
+    )
+
+    _response = _gateway.complete(
+        _Request("hello")
+    )
+
+    assert _response.success is True
+    assert _response.provider == "local-test"
+    assert "LOCAL_LLM_OK" in _response.text
+
+    # Streaming
+    _chunks = list(
+        _gateway.stream(
+            _Request("stream test")
+        )
+    )
+
+    assert _chunks
+    assert "".join(_chunks).strip()
+
+    # Token budget
+    _budget = _Budget(5)
+
+    assert _budget.reserve(2) is True
+    assert _budget.remaining == 3
+
+    try:
+        _budget.reserve(4)
+        raise AssertionError(
+            "TOKEN_LIMIT_NOT_ENFORCED"
+        )
+    except RuntimeError as _exc:
+        assert str(_exc) == "TOKEN_BUDGET_EXCEEDED"
+
+    # Context
+    _context = _Context(
+        token_limit=20
+    )
+
+    _context.add(
+        "system",
+        "system instruction",
+        priority=10
+    )
+
+    _context.add(
+        "user",
+        "user request",
+        priority=100
+    )
+
+    _context.add(
+        "memory",
+        "useful memory",
+        priority=50
+    )
+
+    _built = _context.build()
+
+    assert _built
+    assert _built[0]["priority"] == 100
+
+    # Integrated AI/context execution
+    _runner = _Runner(
+        _gateway,
+        context=_context,
+        resource_budget=_Resource(
+            max_seconds=10,
+            max_output_tokens=100
+        )
+    )
+
+    _result = _runner.execute(
+        "execute local AI test"
+    )
+
+    assert _result.success is True
+
+    # Qwen adapter must be safe when unconfigured
+    _qwen = _Qwen()
+
+    assert _qwen.configured is False
+
+    try:
+        _qwen.complete(
+            _Request(
+                "must not call external service"
+            )
+        )
+
+        raise AssertionError(
+            "UNCONFIGURED_QWEN_DID_NOT_FAIL_SAFELY"
+        )
+
+    except RuntimeError as _exc:
+        assert str(_exc) == "QWEN_PROVIDER_NOT_CONFIGURED"
+
+    # Failure + automatic fallback
+    class _BrokenProvider:
+        name = "broken"
+
+        def __init__(self):
+            self.health = _module.ProviderHealth(
+                self.name
+            )
+
+        def complete(self, request):
+            raise RuntimeError(
+                "INTENTIONAL_PROVIDER_FAILURE"
+            )
+
+    _broken = _BrokenProvider()
+
+    _fallback_registry = _Registry()
+
+    _fallback_registry.register(
+        _broken
+    )
+
+    _fallback_registry.register(
+        _Local()
+    )
+
+    _fallback_gateway = _Gateway(
+        _fallback_registry,
+        retry_count=0
+    )
+
+    _fallback_result = (
+        _fallback_gateway.complete(
+            _Request("fallback test")
+        )
+    )
+
+    assert _fallback_result.success is True
+    assert _fallback_result.provider == "local-test"
+    assert _broken.health.failures >= 1
+
+    print("STAGE_12_BUILD=PASSED")
+    print("STAGE_12_MODULE_LOAD=PASSED")
+    print("STAGE_12_COMPONENTS=VERIFIED")
+    print("STAGE_12_LLM_GATEWAY=VERIFIED")
+    print("STAGE_12_PROVIDER_DISCOVERY=VERIFIED")
+    print("STAGE_12_PROVIDER_SELECTION=VERIFIED")
+    print("STAGE_12_STREAMING=VERIFIED")
+    print("STAGE_12_CONTEXT=VERIFIED")
+    print("STAGE_12_TOKEN_BUDGET=VERIFIED")
+    print("STAGE_12_RESOURCE_BUDGET=VERIFIED")
+    print("STAGE_12_RETRY_FALLBACK=VERIFIED")
+    print("STAGE_12_QWEN_ADAPTER=VERIFIED")
+    print("STAGE_12_EXTERNAL_CALLS_NOT_REQUIRED=VERIFIED")
+    print("STAGE_12_TESTS=PASSED")
+

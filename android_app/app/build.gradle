@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace 'com.quickservice.ai'
+    namespace "com.quickservice.giant"
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.quickservice.ai'
+        applicationId "com.quickservice.giant"
         minSdk 23
         targetSdk 35
         versionCode 1

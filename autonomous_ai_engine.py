@@ -1180,3 +1180,123 @@ def run_stage4_tests():
 
     return True
 
+
+# ===== STAGE_5_UNIVERSAL_AI_GATEWAY =====
+
+class AIProvider:
+    def __init__(self, name, model=None, executor=None, enabled=True):
+        self.name = name
+        self.model = model
+        self.executor = executor
+        self.enabled = enabled
+
+    def available(self):
+        return self.enabled and self.executor is not None
+
+    def execute(self, prompt, **kwargs):
+        if not self.enabled:
+            raise RuntimeError('PROVIDER_DISABLED')
+        if self.executor is None:
+            raise RuntimeError('PROVIDER_NOT_CONFIGURED')
+        return self.executor(prompt, **kwargs)
+
+class ProviderRegistry:
+    def __init__(self):
+        self.providers = {}
+
+    def register(self, provider):
+        if not provider.name:
+            raise ValueError('PROVIDER_NAME_REQUIRED')
+        self.providers[provider.name] = provider
+
+    def get(self, name):
+        return self.providers.get(name)
+
+    def list_available(self):
+        return [
+            name for name, provider in self.providers.items()
+            if provider.available()
+        ]
+
+class ModelSelector:
+    def select(self, registry, preferred=None):
+        if preferred:
+            provider = registry.get(preferred)
+            if provider is not None and provider.available():
+                return provider
+        for provider in registry.providers.values():
+            if provider.available():
+                return provider
+        return None
+
+class AIGateway:
+    def __init__(self, registry=None, selector=None):
+        self.registry = registry or ProviderRegistry()
+        self.selector = selector or ModelSelector()
+
+    def register(self, provider):
+        self.registry.register(provider)
+
+    def providers(self):
+        return self.registry.list_available()
+
+    def execute(self, prompt, provider=None, **kwargs):
+        if provider is not None:
+            selected = self.registry.get(provider)
+            if selected is None:
+                raise RuntimeError('NO_AI_PROVIDER_AVAILABLE')
+            if not selected.available():
+                raise RuntimeError('NO_AI_PROVIDER_AVAILABLE')
+        else:
+            selected = self.selector.select(self.registry)
+
+        if selected is None:
+            raise RuntimeError('NO_AI_PROVIDER_AVAILABLE')
+
+        return selected.execute(prompt, **kwargs)
+
+def run_stage5_tests():
+    registry = ProviderRegistry()
+
+    fake = AIProvider(
+        name='test-provider',
+        model='test-model',
+        executor=lambda prompt, **kwargs: 'AI:' + prompt
+    )
+
+    registry.register(fake)
+    assert registry.get('test-provider') is fake
+    assert registry.list_available() == ['test-provider']
+
+    selector = ModelSelector()
+    selected = selector.select(registry, 'test-provider')
+    assert selected is fake
+
+    gateway = AIGateway(registry, selector)
+    result = gateway.execute('hello', provider='test-provider')
+    assert result == 'AI:hello'
+
+    disabled = AIProvider(
+        name='disabled-provider',
+        model='disabled-model',
+        executor=lambda prompt: 'bad',
+        enabled=False
+    )
+    registry.register(disabled)
+    assert registry.get('disabled-provider').available() is False
+
+    try:
+        gateway.execute('hello', provider='disabled-provider')
+        raise AssertionError('DISABLED_PROVIDER_NOT_BLOCKED')
+    except RuntimeError as exc:
+        assert str(exc) == 'NO_AI_PROVIDER_AVAILABLE'
+
+    empty = AIGateway()
+    try:
+        empty.execute('hello')
+        raise AssertionError('EMPTY_GATEWAY_NOT_BLOCKED')
+    except RuntimeError as exc:
+        assert str(exc) == 'NO_AI_PROVIDER_AVAILABLE'
+
+    return True
+

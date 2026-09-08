@@ -1,22 +1,18 @@
+
 from __future__ import annotations
 
-import json
-import time
-import uuid
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+import json
+import time
+import tempfile
+import uuid
 
 
-# ============================================================
-# VERSION / CONSTANTS
-# ============================================================
-
-ENGINE_NAME = "AUTONOMOUS_AI_ENGINE"
+ENGINE_NAME = "KHALED Autonomous AI Engine"
 ENGINE_VERSION = "1.0.0-stage1"
-
-SCHEMA_VERSION = 1
 
 
 class Status(str, Enum):
@@ -25,922 +21,622 @@ class Status(str, Enum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-    BLOCKED = "BLOCKED"
-    RECOVERING = "RECOVERING"
-    VERIFIED = "VERIFIED"
+    PAUSED = "PAUSED"
+    CANCELLED = "CANCELLED"
 
-
-TERMINAL_STATES = {
-    Status.VERIFIED,
-    Status.BLOCKED,
-}
-
-
-# ============================================================
-# HELPERS
-# ============================================================
-
-def now() -> float:
-    return time.time()
-
-
-def new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex}"
-
-
-def json_safe(value: Any) -> Any:
-    if isinstance(value, Enum):
-        return value.value
-
-    if isinstance(value, Path):
-        return str(value)
-
-    if hasattr(value, "to_dict"):
-        return value.to_dict()
-
-    if isinstance(value, dict):
-        return {str(k): json_safe(v) for k, v in value.items()}
-
-    if isinstance(value, (list, tuple, set)):
-        return [json_safe(v) for v in value]
-
-    return value
-
-
-# ============================================================
-# TASK STEP
-# ============================================================
 
 @dataclass
 class TaskStep:
     name: str
     action: Optional[str] = None
-    step_id: str = field(default_factory=lambda: new_id("step"))
     status: Status = Status.CREATED
-    input_data: Dict[str, Any] = field(default_factory=dict)
-    output_data: Any = None
+    result: Any = None
     error: Optional[str] = None
-    attempts: int = 0
-    created_at: float = field(default_factory=now)
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
 
-    def start(self) -> None:
-        self.status = Status.RUNNING
-        self.started_at = now()
-        self.attempts += 1
+    def complete(self, result=None):
+        self.status = Status.COMPLETED
+        self.result = result
         self.error = None
 
-    def complete(self, result: Any = None) -> None:
-        self.status = Status.COMPLETED
-        self.output_data = result
-        self.completed_at = now()
-
-    def fail(self, error: Any) -> None:
+    def fail(self, error):
         self.status = Status.FAILED
         self.error = str(error)
-        self.completed_at = now()
 
-    def block(self, reason: Any) -> None:
-        self.status = Status.BLOCKED
-        self.error = str(reason)
-        self.completed_at = now()
-
-    def verify(self) -> None:
-        if self.status != Status.COMPLETED:
-            raise RuntimeError(
-                f"Cannot verify step {self.step_id} from {self.status}"
-            )
-        self.status = Status.VERIFIED
-        self.completed_at = now()
-
-    def to_dict(self) -> Dict[str, Any]:
-        return json_safe(asdict(self))
-
-
-# ============================================================
-# TASK
-# ============================================================
 
 @dataclass
 class Task:
-    request: str
-    task_id: str = field(default_factory=lambda: new_id("task"))
+    task_id: str
+    goal: str
     status: Status = Status.CREATED
-    capability: str = "general"
-    metadata: Dict[str, Any] = field(default_factory=dict)
     steps: List[TaskStep] = field(default_factory=list)
     result: Any = None
     error: Optional[str] = None
-    attempts: int = 0
-    created_at: float = field(default_factory=now)
-    updated_at: float = field(default_factory=now)
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
 
-    def touch(self) -> None:
-        self.updated_at = now()
-
-    def add_step(
-        self,
-        name: str,
-        action: Optional[str] = None,
-        input_data: Optional[Dict[str, Any]] = None,
-    ) -> TaskStep:
-        step = TaskStep(
-            name=name,
-            action=action,
-            input_data=input_data or {},
-        )
+    def add_step(self, step: TaskStep):
         self.steps.append(step)
-        self.touch()
-        return step
+        self.updated_at = time.time()
 
-    def get_step(self, step_id: str) -> Optional[TaskStep]:
-        for step in self.steps:
-            if step.step_id == step_id:
-                return step
-        return None
+    def set_status(self, status: Status):
+        self.status = status
+        self.updated_at = time.time()
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "task_id": self.task_id,
-            "request": self.request,
-            "status": self.status.value,
-            "capability": self.capability,
-            "metadata": json_safe(self.metadata),
-            "steps": [step.to_dict() for step in self.steps],
-            "result": json_safe(self.result),
-            "error": self.error,
-            "attempts": self.attempts,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Task":
-        task = cls(
-            request=data["request"],
-            task_id=data["task_id"],
-            status=Status(data.get("status", Status.CREATED.value)),
-            capability=data.get("capability", "general"),
-            metadata=data.get("metadata", {}),
-            result=data.get("result"),
-            error=data.get("error"),
-            attempts=int(data.get("attempts", 0)),
-            created_at=float(data.get("created_at", now())),
-            updated_at=float(data.get("updated_at", now())),
-        )
-
-        for raw in data.get("steps", []):
-            step = TaskStep(
-                name=raw["name"],
-                action=raw.get("action"),
-                step_id=raw.get("step_id", new_id("step")),
-                status=Status(raw.get("status", Status.CREATED.value)),
-                input_data=raw.get("input_data", {}),
-                output_data=raw.get("output_data"),
-                error=raw.get("error"),
-                attempts=int(raw.get("attempts", 0)),
-                created_at=float(raw.get("created_at", now())),
-                started_at=raw.get("started_at"),
-                completed_at=raw.get("completed_at"),
-            )
-            task.steps.append(step)
-
-        return task
-
-
-# ============================================================
-# PLAN
-# ============================================================
 
 @dataclass
 class Plan:
+    plan_id: str
     task_id: str
+    goal: str
     steps: List[TaskStep] = field(default_factory=list)
-    plan_id: str = field(default_factory=lambda: new_id("plan"))
     status: Status = Status.CREATED
-    created_at: float = field(default_factory=now)
 
-    def add_step(
-        self,
-        name: str,
-        action: Optional[str] = None,
-        input_data: Optional[Dict[str, Any]] = None,
-    ) -> TaskStep:
-        step = TaskStep(
-            name=name,
-            action=action,
-            input_data=input_data or {},
-        )
+    def add_step(self, step: TaskStep):
         self.steps.append(step)
-        return step
 
-    def next_step(self) -> Optional[TaskStep]:
-        for step in self.steps:
-            if step.status in {Status.CREATED, Status.READY}:
-                return step
-        return None
-
-    def is_complete(self) -> bool:
-        return all(
-            step.status in {Status.COMPLETED, Status.VERIFIED}
-            for step in self.steps
-        )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "plan_id": self.plan_id,
-            "task_id": self.task_id,
-            "status": self.status.value,
-            "created_at": self.created_at,
-            "steps": [step.to_dict() for step in self.steps],
-        }
-
-
-# ============================================================
-# EXECUTION MEMORY
-# ============================================================
 
 @dataclass
 class MemoryEvent:
     event_id: str
     event_type: str
-    task_id: Optional[str]
     data: Dict[str, Any]
-    timestamp: float
+    timestamp: float = field(default_factory=time.time)
 
 
 class ExecutionMemory:
-    """
-    Lightweight local execution memory.
-
-    No LLM.
-    No network.
-    No polling.
-    """
-
-    def __init__(self, max_events: int = 5000):
-        self.max_events = max_events
+    def __init__(self):
         self.events: List[MemoryEvent] = []
 
-    def record(
-        self,
-        event_type: str,
-        task_id: Optional[str] = None,
-        **data: Any,
-    ) -> MemoryEvent:
+    def add(self, event_type: str, data: Dict[str, Any]):
         event = MemoryEvent(
-            event_id=new_id("event"),
+            event_id=str(uuid.uuid4()),
             event_type=event_type,
-            task_id=task_id,
-            data=json_safe(data),
-            timestamp=now(),
+            data=data,
         )
-
         self.events.append(event)
-
-        if len(self.events) > self.max_events:
-            self.events = self.events[-self.max_events:]
-
         return event
 
-    def for_task(self, task_id: str) -> List[MemoryEvent]:
-        return [
-            event for event in self.events
-            if event.task_id == task_id
-        ]
+    def recent(self, limit: int = 20):
+        return self.events[-limit:]
 
-    def last(self, task_id: Optional[str] = None) -> Optional[MemoryEvent]:
-        events = (
-            self.events
-            if task_id is None
-            else self.for_task(task_id)
-        )
+    def clear(self):
+        self.events.clear()
 
-        return events[-1] if events else None
-
-    def export(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "event_id": event.event_id,
-                "event_type": event.event_type,
-                "task_id": event.task_id,
-                "data": json_safe(event.data),
-                "timestamp": event.timestamp,
-            }
-            for event in self.events
-        ]
-
-
-# ============================================================
-# STATE MANAGER
-# ============================================================
 
 class StateManager:
-    """
-    Central in-memory state manager.
-
-    State transitions are explicit and auditable.
-    """
-
-    ALLOWED = {
-        Status.CREATED: {
-            Status.READY,
-            Status.BLOCKED,
-            Status.FAILED,
-        },
-        Status.READY: {
-            Status.RUNNING,
-            Status.BLOCKED,
-            Status.FAILED,
-        },
-        Status.RUNNING: {
-            Status.COMPLETED,
-            Status.FAILED,
-            Status.BLOCKED,
-            Status.RECOVERING,
-        },
-        Status.COMPLETED: {
-            Status.VERIFIED,
-            Status.FAILED,
-        },
-        Status.FAILED: {
-            Status.RECOVERING,
-            Status.BLOCKED,
-        },
-        Status.RECOVERING: {
-            Status.READY,
-            Status.FAILED,
-            Status.BLOCKED,
-        },
-        Status.VERIFIED: set(),
-        Status.BLOCKED: set(),
-    }
-
     def __init__(self):
-        self._tasks: Dict[str, Task] = {}
+        self._state: Dict[str, Any] = {}
 
-    def save(self, task: Task) -> Task:
-        task.touch()
-        self._tasks[task.task_id] = task
-        return task
+    def set(self, key: str, value: Any):
+        self._state[key] = value
 
-    def get(self, task_id: str) -> Optional[Task]:
-        return self._tasks.get(task_id)
+    def get(self, key: str, default=None):
+        return self._state.get(key, default)
 
-    def require(self, task_id: str) -> Task:
-        task = self.get(task_id)
-        if task is None:
-            raise KeyError(f"Task not found: {task_id}")
-        return task
+    def delete(self, key: str):
+        self._state.pop(key, None)
 
-    def transition(self, task: Task, new_status: Status) -> Task:
-        current = task.status
+    def snapshot(self):
+        return dict(self._state)
 
-        if current == new_status:
-            return task
+    def restore(self, state: Dict[str, Any]):
+        self._state = dict(state)
 
-        allowed = self.ALLOWED.get(current, set())
-
-        if new_status not in allowed:
-            raise ValueError(
-                f"Invalid transition: {current.value} -> {new_status.value}"
-            )
-
-        task.status = new_status
-        task.touch()
-        self.save(task)
-        return task
-
-    def all(self) -> List[Task]:
-        return list(self._tasks.values())
-
-
-# ============================================================
-# TASK ENGINE
-# ============================================================
-
-class TaskEngine:
-    """
-    Lightweight task creation and planning foundation.
-    """
-
-    def __init__(
-        self,
-        state: Optional[StateManager] = None,
-        memory: Optional[ExecutionMemory] = None,
-    ):
-        self.state = state or StateManager()
-        self.memory = memory or ExecutionMemory()
-
-    def create(
-        self,
-        request: str,
-        capability: str = "general",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Task:
-        if not isinstance(request, str) or not request.strip():
-            raise ValueError("Task request must be a non-empty string")
-
-        task = Task(
-            request=request.strip(),
-            capability=capability,
-            metadata=metadata or {},
-        )
-
-        self.state.save(task)
-
-        self.memory.record(
-            "TASK_CREATED",
-            task.task_id,
-            request=task.request,
-            capability=task.capability,
-        )
-
-        return task
-
-    def prepare(self, task: Task) -> Task:
-        if task.status == Status.CREATED:
-            self.state.transition(task, Status.READY)
-
-        self.memory.record(
-            "TASK_READY",
-            task.task_id,
-        )
-
-        return task
-
-    def add_step(
-        self,
-        task: Task,
-        name: str,
-        action: Optional[str] = None,
-        input_data: Optional[Dict[str, Any]] = None,
-    ) -> TaskStep:
-        step = task.add_step(
-            name=name,
-            action=action,
-            input_data=input_data,
-        )
-
-        self.state.save(task)
-
-        self.memory.record(
-            "STEP_CREATED",
-            task.task_id,
-            step_id=step.step_id,
-            name=step.name,
-        )
-
-        return step
-
-
-# ============================================================
-# PERSISTENT STORE
-# ============================================================
 
 class PersistentStore:
-    """
-    Local JSON persistence.
+    def __init__(self, path: Optional[str] = None):
+        self.path = Path(path) if path else Path(tempfile.gettempdir()) / "khaled_engine_state.json"
 
-    Standard library only.
-    Atomic write strategy.
-    """
-
-    def __init__(self, root: str | Path):
-        self.root = Path(root)
-        self.tasks_dir = self.root / "tasks"
-        self.memory_file = self.root / "memory.json"
-
-        self.tasks_dir.mkdir(parents=True, exist_ok=True)
-
-    def save_task(self, task: Task) -> Path:
-        destination = self.tasks_dir / f"{task.task_id}.json"
-        temporary = destination.with_suffix(".tmp")
-
-        temporary.write_text(
-            json.dumps(
-                task.to_dict(),
-                ensure_ascii=False,
-                indent=2,
-            ),
+    def save(self, data: Dict[str, Any]):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.path.with_suffix(".tmp")
+        temp.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
+        temp.replace(self.path)
 
-        temporary.replace(destination)
-        return destination
+    def load(self):
+        if not self.path.exists():
+            return {}
+        return json.loads(self.path.read_text(encoding="utf-8"))
 
-    def load_task(self, task_id: str) -> Task:
-        path = self.tasks_dir / f"{task_id}.json"
+    def exists(self):
+        return self.path.exists()
 
-        if not path.exists():
-            raise FileNotFoundError(path)
+    def delete(self):
+        if self.path.exists():
+            self.path.unlink()
 
-        data = json.loads(
-            path.read_text(encoding="utf-8")
+
+class TaskEngine:
+    def __init__(self):
+        self.tasks: Dict[str, Task] = {}
+        self.memory = ExecutionMemory()
+        self.state = StateManager()
+
+    def create_task(self, goal: str):
+        task = Task(
+            task_id=str(uuid.uuid4()),
+            goal=goal,
+            status=Status.READY,
         )
-
-        return Task.from_dict(data)
-
-    def save_memory(self, memory: ExecutionMemory) -> Path:
-        temporary = self.memory_file.with_suffix(".tmp")
-
-        temporary.write_text(
-            json.dumps(
-                memory.export(),
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        self.tasks[task.task_id] = task
+        self.memory.add(
+            "TASK_CREATED",
+            {"task_id": task.task_id, "goal": goal},
         )
+        return task
 
-        temporary.replace(self.memory_file)
-        return self.memory_file
+    def get_task(self, task_id: str):
+        return self.tasks.get(task_id)
 
+    def start(self, task_id: str):
+        task = self.tasks[task_id]
+        task.set_status(Status.RUNNING)
+        self.memory.add("TASK_STARTED", {"task_id": task_id})
+        return task
 
-# ============================================================
-# TASK LIFECYCLE
-# ============================================================
+    def complete(self, task_id: str, result=None):
+        task = self.tasks[task_id]
+        task.result = result
+        task.set_status(Status.COMPLETED)
+        self.memory.add(
+            "TASK_COMPLETED",
+            {"task_id": task_id, "result": result},
+        )
+        return task
+
+    def fail(self, task_id: str, error):
+        task = self.tasks[task_id]
+        task.error = str(error)
+        task.set_status(Status.FAILED)
+        self.memory.add(
+            "TASK_FAILED",
+            {"task_id": task_id, "error": str(error)},
+        )
+        return task
+
 
 class TaskLifecycle:
-    """
-    Persistent lifecycle facade.
+    def __init__(self, engine: TaskEngine):
+        self.engine = engine
 
-    Keeps task state, history and persistence together.
-    """
+    def pause(self, task_id: str):
+        return self.engine.tasks[task_id].set_status(Status.PAUSED)
 
-    def __init__(
-        self,
-        store: Optional[PersistentStore] = None,
-        state: Optional[StateManager] = None,
-        memory: Optional[ExecutionMemory] = None,
-    ):
-        self.store = store
-        self.state = state or StateManager()
-        self.memory = memory or ExecutionMemory()
+    def cancel(self, task_id: str):
+        return self.engine.tasks[task_id].set_status(Status.CANCELLED)
 
-    def create(
-        self,
-        request: str,
-        capability: str = "general",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Task:
-        engine = TaskEngine(self.state, self.memory)
-
-        task = engine.create(
-            request=request,
-            capability=capability,
-            metadata=metadata,
-        )
-
-        engine.prepare(task)
-
-        self.persist(task)
-
+    def resume(self, task_id: str):
+        task = self.engine.tasks[task_id]
+        task.set_status(Status.RUNNING)
         return task
 
-    def persist(self, task: Task) -> None:
-        self.state.save(task)
-
-        if self.store:
-            self.store.save_task(task)
-            self.store.save_memory(self.memory)
-
-    def load(self, task_id: str) -> Task:
-        if self.store:
-            task = self.store.load_task(task_id)
-            self.state.save(task)
-            return task
-
-        return self.state.require(task_id)
-
-    def transition(
-        self,
-        task: Task,
-        status: Status,
-    ) -> Task:
-        self.state.transition(task, status)
-
-        self.memory.record(
-            "STATE_TRANSITION",
-            task.task_id,
-            status=status.value,
-        )
-
-        self.persist(task)
-        return task
-
-    def history(self, task_id: str) -> List[Dict[str, Any]]:
-        return [
-            {
-                "event_id": event.event_id,
-                "event_type": event.event_type,
-                "task_id": event.task_id,
-                "data": event.data,
-                "timestamp": event.timestamp,
-            }
-            for event in self.memory.for_task(task_id)
-        ]
-
-
-# ============================================================
-# PLAN EXECUTOR FOUNDATION
-# ============================================================
 
 class PlanExecutor:
-    """
-    Local deterministic executor.
+    def __init__(self, engine: TaskEngine):
+        self.engine = engine
 
-    It accepts Python callables.
-    No LLM and no network are required.
-    """
-
-    def __init__(self, lifecycle: TaskLifecycle):
-        self.lifecycle = lifecycle
-
-    def execute(
-        self,
-        task: Task,
-        plan: Plan,
-        actions: Optional[Dict[str, Callable[..., Any]]] = None,
-    ) -> Task:
-        actions = actions or {}
-
-        if task.status == Status.CREATED:
-            self.lifecycle.transition(task, Status.READY)
-
-        self.lifecycle.transition(task, Status.RUNNING)
-        task.attempts += 1
+    def execute(self, task: Task, plan: Plan, handlers=None):
+        handlers = handlers or {}
+        self.engine.start(task.task_id)
+        plan.status = Status.RUNNING
 
         try:
             for step in plan.steps:
-                if step.status in {Status.COMPLETED, Status.VERIFIED}:
+                handler = handlers.get(step.action)
+
+                if handler is None:
+                    step.complete({
+                        "action": step.action,
+                        "status": "NO_HANDLER",
+                    })
+                    task.add_step(step)
                     continue
 
-                step.start()
+                result = handler(step)
+                step.complete(result)
+                task.add_step(step)
 
-                try:
-                    action = actions.get(step.action or "")
-
-                    if action is None:
-                        result = step.input_data
-                    else:
-                        result = action(step.input_data)
-
-                    step.complete(result)
-
-                    self.lifecycle.memory.record(
-                        "STEP_COMPLETED",
-                        task.task_id,
-                        step_id=step.step_id,
-                    )
-
-                except Exception as exc:
-                    step.fail(exc)
-
-                    self.lifecycle.memory.record(
-                        "STEP_FAILED",
-                        task.task_id,
-                        step_id=step.step_id,
-                        error=str(exc),
-                    )
-
-                    self.lifecycle.transition(task, Status.FAILED)
-                    task.error = str(exc)
-                    self.lifecycle.persist(task)
-                    return task
-
-            task.result = {
-                "steps": len(plan.steps),
-                "completed": sum(
-                    1
-                    for step in plan.steps
-                    if step.status == Status.COMPLETED
-                ),
-            }
-
-            self.lifecycle.transition(task, Status.COMPLETED)
-            return task
+            plan.status = Status.COMPLETED
+            return self.engine.complete(
+                task.task_id,
+                {"plan_id": plan.plan_id},
+            )
 
         except Exception as exc:
-            task.error = str(exc)
+            plan.status = Status.FAILED
+            self.engine.fail(task.task_id, str(exc))
+            raise
 
-            if task.status == Status.RUNNING:
-                self.lifecycle.transition(task, Status.FAILED)
-
-            self.lifecycle.persist(task)
-            return task
-
-
-# ============================================================
-# FOUNDATION API
-# ============================================================
 
 class AutonomousEngineFoundation:
-    """
-    Single-file Stage-1 foundation.
+    def __init__(self, persistence_path=None):
+        self.engine = TaskEngine()
+        self.lifecycle = TaskLifecycle(self.engine)
+        self.executor = PlanExecutor(self.engine)
+        self.store = PersistentStore(persistence_path)
 
-    Later stages can attach:
-        - intent
-        - planner
-        - tools
-        - research
-        - LLM providers
-        - context/token control
-        - recovery
-        - hot swap
-        - verification
-        - autonomous orchestration
-    without changing the persistence contract.
-    """
+    def create_task(self, goal):
+        return self.engine.create_task(goal)
 
-    def __init__(
-        self,
-        data_dir: Optional[str | Path] = None,
-    ):
-        self.data_dir = (
-            Path(data_dir)
-            if data_dir is not None
-            else Path(".engine_data")
-        )
-
-        self.store = PersistentStore(self.data_dir)
-        self.state = StateManager()
-        self.memory = ExecutionMemory()
-
-        self.lifecycle = TaskLifecycle(
-            store=self.store,
-            state=self.state,
-            memory=self.memory,
-        )
-
-        self.task_engine = TaskEngine(
-            state=self.state,
-            memory=self.memory,
-        )
-
-        self.plan_executor = PlanExecutor(
-            lifecycle=self.lifecycle,
-        )
-
-    def create_task(
-        self,
-        request: str,
-        capability: str = "general",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Task:
-        return self.lifecycle.create(
-            request=request,
-            capability=capability,
-            metadata=metadata,
-        )
-
-    def create_plan(self, task: Task) -> Plan:
-        plan = Plan(task_id=task.task_id)
-        return plan
-
-    def status(self, task_id: str) -> str:
-        return self.lifecycle.load(task_id).status.value
-
-    def history(self, task_id: str) -> List[Dict[str, Any]]:
-        return self.lifecycle.history(task_id)
-
-
-# ============================================================
-# STAGE 1 SELF TESTS
-# ============================================================
-
-def run_stage1_tests() -> None:
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as temp:
-        engine = AutonomousEngineFoundation(temp)
-
-        # 1. Task creation
-        task = engine.create_task(
-            "Build and verify an autonomous task engine",
-            capability="general",
-        )
-
-        assert task.status == Status.READY
-        assert task.task_id
-        assert task.request
-
-        # 2. Plan creation
-        plan = engine.create_plan(task)
-
-        plan.add_step(
-            "Initialize",
-            action="initialize",
-            input_data={"ok": True},
-        )
-
-        plan.add_step(
-            "Verify",
-            action="verify",
-            input_data={"verified": True},
-        )
-
-        assert len(plan.steps) == 2
-        assert plan.task_id == task.task_id
-
-        # 3. Deterministic local execution
-        def initialize(data):
-            assert data["ok"] is True
-            return {"initialized": True}
-
-        def verify(data):
-            assert data["verified"] is True
-            return {"verified": True}
-
-        result = engine.plan_executor.execute(
-            task,
-            plan,
-            actions={
-                "initialize": initialize,
-                "verify": verify,
+    def save(self):
+        payload = {
+            "version": ENGINE_VERSION,
+            "tasks": {
+                task_id: asdict(task)
+                for task_id, task in self.engine.tasks.items()
             },
+            "state": self.engine.state.snapshot(),
+            "memory": [
+                asdict(event)
+                for event in self.engine.memory.events
+            ],
+        }
+        self.store.save(payload)
+
+    def load(self):
+        data = self.store.load()
+
+        if not data:
+            return False
+
+        self.engine.state.restore(data.get("state", {}))
+
+        for task_id, raw in data.get("tasks", {}).items():
+            raw["status"] = Status(raw["status"])
+            raw["steps"] = [
+                TaskStep(
+                    name=s["name"],
+                    action=s.get("action"),
+                    status=Status(s["status"]),
+                    result=s.get("result"),
+                    error=s.get("error"),
+                )
+                for s in raw.get("steps", [])
+            ]
+            self.engine.tasks[task_id] = Task(**raw)
+
+        return True
+
+
+def run_stage1_tests():
+    engine = AutonomousEngineFoundation()
+
+    # Task Engine
+    task = engine.create_task("stage 1 test")
+    assert task.status == Status.READY
+    assert engine.engine.get_task(task.task_id) is task
+
+    # Task Step
+    step = TaskStep(name="test-step", action="noop")
+    step.complete("ok")
+    assert step.status == Status.COMPLETED
+    assert step.result == "ok"
+
+    # Plan
+    plan = Plan(
+        plan_id=str(uuid.uuid4()),
+        task_id=task.task_id,
+        goal=task.goal,
+    )
+    plan.add_step(TaskStep(name="step", action="noop"))
+    assert len(plan.steps) == 1
+
+    # State
+    engine.engine.state.set("x", 123)
+    assert engine.engine.state.get("x") == 123
+
+    # Memory
+    engine.engine.memory.add("TEST", {"ok": True})
+    assert len(engine.engine.memory.recent()) >= 1
+
+    # Lifecycle
+    engine.lifecycle.pause(task.task_id)
+    assert task.status == Status.PAUSED
+    engine.lifecycle.resume(task.task_id)
+    assert task.status == Status.RUNNING
+
+    # Executor
+    task2 = engine.create_task("executor test")
+    plan2 = Plan(
+        plan_id=str(uuid.uuid4()),
+        task_id=task2.task_id,
+        goal=task2.goal,
+    )
+    plan2.add_step(TaskStep(name="noop", action="noop"))
+
+    result = engine.executor.execute(
+        task2,
+        plan2,
+        {"noop": lambda step: "EXECUTED"},
+    )
+
+    assert result.status == Status.COMPLETED
+    assert result.steps[-1].result == "EXECUTED"
+
+    # Failure path
+    task3 = engine.create_task("failure test")
+    plan3 = Plan(
+        plan_id=str(uuid.uuid4()),
+        task_id=task3.task_id,
+        goal=task3.goal,
+    )
+    plan3.add_step(TaskStep(name="bad", action="bad"))
+
+    try:
+        engine.executor.execute(
+            task3,
+            plan3,
+            {"bad": lambda step: 1 / 0},
         )
+        raise AssertionError("FAILURE_PATH_NOT_TRIGGERED")
+    except ZeroDivisionError:
+        pass
 
-        assert result.status == Status.COMPLETED
-        assert all(
-            step.status == Status.COMPLETED
-            for step in plan.steps
-        )
+    assert task3.status == Status.FAILED
 
-        # 4. Persistence
-        loaded = engine.lifecycle.load(task.task_id)
+    # Persistence
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "state.json"
+        persistent = AutonomousEngineFoundation(str(path))
+        persistent_task = persistent.create_task("persistence test")
+        persistent.engine.state.set("persistent", True)
+        persistent.save()
 
-        assert loaded.task_id == task.task_id
-        assert loaded.status == Status.COMPLETED
+        assert path.exists()
 
-        # 5. Verification transition
-        engine.lifecycle.transition(
-            loaded,
-            Status.VERIFIED,
-        )
+        restored = AutonomousEngineFoundation(str(path))
+        assert restored.load() is True
+        assert restored.engine.state.get("persistent") is True
+        assert restored.engine.get_task(persistent_task.task_id) is not None
 
-        verified = engine.lifecycle.load(task.task_id)
-
-        assert verified.status == Status.VERIFIED
-
-        # 6. History
-        history = engine.history(task.task_id)
-
-        assert history
-        assert any(
-            item["event_type"] == "TASK_CREATED"
-            for item in history
-        )
-
-        # 7. Failure path
-        failed_task = engine.create_task(
-            "Failure test",
-            capability="general",
-        )
-
-        failed_plan = engine.create_plan(failed_task)
-        failed_plan.add_step(
-            "Fail",
-            action="fail",
-        )
-
-        def fail(_):
-            raise RuntimeError("intentional-test-error")
-
-        failed_result = engine.plan_executor.execute(
-            failed_task,
-            failed_plan,
-            actions={"fail": fail},
-        )
-
-        assert failed_result.status == Status.FAILED
-        assert failed_result.error == "intentional-test-error"
-
-        # 8. Persistence after failure
-        failed_loaded = engine.lifecycle.load(
-            failed_task.task_id
-        )
-
-        assert failed_loaded.status == Status.FAILED
-
-    print("STAGE_1_TESTS=PASSED")
-    print("TASK_ENGINE=VERIFIED")
-    print("TASK_STEP=VERIFIED")
-    print("PLAN=VERIFIED")
-    print("STATE_MANAGER=VERIFIED")
-    print("EXECUTION_MEMORY=VERIFIED")
-    print("TASK_LIFECYCLE=VERIFIED")
-    print("PERSISTENT_STORE=VERIFIED")
-    print("PLAN_EXECUTOR_FOUNDATION=VERIFIED")
-    print("FAILURE_PATH=VERIFIED")
-    print("PERSISTENCE_PATH=VERIFIED")
-    print("LLM_REQUIRED_FOR_STAGE_1=NO")
-    print("NETWORK_REQUIRED_FOR_STAGE_1=NO")
-    print("STAGE_1_EXTERNAL_EXECUTION=NOT_VERIFIED")
+    return True
 
 
 if __name__ == "__main__":
     run_stage1_tests()
+    print("STAGE_1_TESTS=PASSED")
+
+# ============================================================
+# STAGE_2_SAFE_MARKER
+# KHALED Understanding and Planning Layer
+# ============================================================
+
+from enum import Enum as _Stage2Enum
+from dataclasses import dataclass as _Stage2Dataclass, field as _Stage2Field
+import re as _Stage2Re
+
+class IntentType(_Stage2Enum):
+    UNKNOWN = 'UNKNOWN'
+    CREATE = 'CREATE'
+    MODIFY = 'MODIFY'
+    ANALYZE = 'ANALYZE'
+    TEST = 'TEST'
+    DEBUG = 'DEBUG'
+    REPAIR = 'REPAIR'
+    RESEARCH = 'RESEARCH'
+    GITHUB = 'GITHUB'
+    EXECUTE = 'EXECUTE'
+
+@_Stage2Dataclass
+class Intent:
+    intent_type: IntentType
+    goal: str
+    confidence: float = 0.0
+    requires_llm: bool = False
+    requires_network: bool = False
+
+class CommandNormalizer:
+    def normalize(self, command):
+        if command is None:
+            return ''
+        return _Stage2Re.sub(r'\s+', ' ', str(command).strip())
+
+class IntentEngine:
+    KEYWORDS = {
+        IntentType.CREATE: (
+            "create", "build", "make", "انشاء", "إنشاء",
+            "انشئ", "أنشئ", "ابني", "بناء"
+        ),
+        IntentType.MODIFY: (
+            "modify", "change", "edit", "update",
+            "تعديل", "عدل", "تغيير", "غير", "غيّر"
+        ),
+        IntentType.ANALYZE: (
+            "analyze", "analysis", "inspect",
+            "حلل", "تحليل", "افحص", "فحص"
+        ),
+        IntentType.TEST: (
+            "test", "tests", "testing",
+            "اختبر", "اختبار", "اختبارات"
+        ),
+        IntentType.DEBUG: (
+            "debug", "debugging", "error", "bug",
+            "خطأ", "اخطاء", "أخطاء", "تصحيح"
+        ),
+        IntentType.REPAIR: (
+            "repair", "repairs", "fix", "fixing",
+            "إصلاح", "اصلاح", "اصلح", "أصلح",
+            "تصليح", "إصلاحه", "اصلحه", "أصلحه"
+        ),
+        IntentType.RESEARCH: (
+            "research", "search", "investigate",
+            "ابحث", "بحث", "دراسة", "استقصاء"
+        ),
+        IntentType.GITHUB: (
+            "github", "git hub", "repository",
+            "repo", "مستودع", "مستودع github"
+        ),
+        IntentType.EXECUTE: (
+            "run", "execute", "launch",
+            "شغل", "تشغيل", "نفذ", "تنفيذ"
+        ),
+    }
+
+    def detect(self, command):
+        value = CommandNormalizer().normalize(command)
+        low = value.lower()
+
+        scores = {}
+
+        for intent_type, keywords in self.KEYWORDS.items():
+            score = 0
+            for keyword in keywords:
+                if keyword.lower() in low:
+                    score += 1
+            scores[intent_type] = score
+
+        priority = (
+            IntentType.REPAIR,
+            IntentType.DEBUG,
+            IntentType.MODIFY,
+            IntentType.CREATE,
+            IntentType.TEST,
+            IntentType.RESEARCH,
+            IntentType.GITHUB,
+            IntentType.EXECUTE,
+            IntentType.ANALYZE,
+        )
+
+        best = IntentType.UNKNOWN
+        best_score = 0
+
+        for intent_type in priority:
+            score = scores.get(intent_type, 0)
+            if score > best_score:
+                best = intent_type
+                best_score = score
+
+        confidence = min(1.0, best_score / 2.0)
+
+        needs_network = best in (
+            IntentType.RESEARCH,
+            IntentType.GITHUB,
+        )
+
+        needs_llm = best in (
+            IntentType.ANALYZE,
+            IntentType.DEBUG,
+            IntentType.REPAIR,
+            IntentType.RESEARCH,
+        )
+
+        return Intent(
+            best,
+            value,
+            confidence,
+            needs_llm,
+            needs_network,
+        )
+
+class TaskRouter:
+    ROUTES = {
+        IntentType.CREATE: 'BUILD',
+        IntentType.MODIFY: 'MODIFY',
+        IntentType.ANALYZE: 'ANALYSIS',
+        IntentType.TEST: 'TEST',
+        IntentType.DEBUG: 'DEBUG',
+        IntentType.REPAIR: 'REPAIR',
+        IntentType.RESEARCH: 'RESEARCH',
+        IntentType.GITHUB: 'GITHUB',
+        IntentType.EXECUTE: 'EXECUTION',
+        IntentType.UNKNOWN: 'CLARIFICATION',
+    }
+
+    def route(self, intent):
+        return self.ROUTES.get(intent.intent_type, 'CLARIFICATION')
+
+class DecisionType(_Stage2Enum):
+    LOCAL = 'LOCAL'
+    LLM = 'LLM'
+    NETWORK = 'NETWORK'
+    LLM_NETWORK = 'LLM_NETWORK'
+    CLARIFY = 'CLARIFY'
+
+@_Stage2Dataclass
+class Decision:
+    decision_type: DecisionType
+    route: str
+    reason: str
+    requires_llm: bool
+    requires_network: bool
+
+class DecisionEngine:
+    def decide(self, intent, route):
+        if intent.intent_type == IntentType.UNKNOWN:
+            return Decision(DecisionType.CLARIFY, route, 'Intent requires clarification.', False, False)
+        if intent.requires_llm and intent.requires_network:
+            kind = DecisionType.LLM_NETWORK
+        elif intent.requires_llm:
+            kind = DecisionType.LLM
+        elif intent.requires_network:
+            kind = DecisionType.NETWORK
+        else:
+            kind = DecisionType.LOCAL
+        return Decision(kind, route, 'Selected execution path.', intent.requires_llm, intent.requires_network)
+
+@_Stage2Dataclass
+class PlannedStep:
+    step_id: str
+    name: str
+    action: str
+    dependencies: list = _Stage2Field(default_factory=list)
+
+class Planner:
+    def create_plan(self, task_id, goal, intent, route):
+        steps = [PlannedStep(task_id + ':understand', 'Understand', 'understand')]
+        steps.append(PlannedStep(task_id + ':plan', 'Plan', 'plan', [steps[-1].step_id]))
+        if intent.requires_network:
+            steps.append(PlannedStep(task_id + ':network', 'Network', 'network', [steps[-1].step_id]))
+        if intent.requires_llm:
+            steps.append(PlannedStep(task_id + ':llm', 'AI Reasoning', 'llm', [steps[-1].step_id]))
+        steps.append(PlannedStep(task_id + ':execute', 'Execute', route.lower(), [steps[-1].step_id]))
+        steps.append(PlannedStep(task_id + ':verify', 'Verify', 'verify', [steps[-1].step_id]))
+        return steps
+
+class Stage2PlanningSystem:
+    def __init__(self):
+        self.normalizer = CommandNormalizer()
+        self.intent_engine = IntentEngine()
+        self.router = TaskRouter()
+        self.decision_engine = DecisionEngine()
+        self.planner = Planner()
+
+    def understand(self, command):
+        normalized = self.normalizer.normalize(command)
+        intent = self.intent_engine.detect(normalized)
+        route = self.router.route(intent)
+        decision = self.decision_engine.decide(intent, route)
+        return {'command': normalized, 'intent': intent, 'route': route, 'decision': decision}
+
+    def plan(self, task_id, command):
+        result = self.understand(command)
+        result['steps'] = self.planner.create_plan(task_id, result['command'], result['intent'], result['route'])
+        return result
+
+def run_stage2_tests():
+    system = Stage2PlanningSystem()
+    assert system.normalizer.normalize('  hello    world ') == 'hello world'
+    r = system.understand('create a project')
+    assert r['intent'].intent_type == IntentType.CREATE
+    assert r['route'] == 'BUILD'
+    assert r['decision'].decision_type == DecisionType.LOCAL
+    r = system.understand('run tests')
+    assert r['intent'].intent_type == IntentType.TEST
+    r = system.understand('repair the error')
+    assert r['intent'].intent_type == IntentType.REPAIR
+    assert r['decision'].requires_llm is True
+    r = system.understand('research this topic')
+    assert r['intent'].intent_type == IntentType.RESEARCH
+    assert r['decision'].requires_network is True
+    assert r['decision'].requires_llm is True
+    r = system.understand('xyz123')
+    assert r['intent'].intent_type == IntentType.UNKNOWN
+    assert r['decision'].decision_type == DecisionType.CLARIFY
+    p = system.plan('stage2-task', 'repair the project error')
+    assert len(p['steps']) >= 4
+    assert p['steps'][0].action == 'understand'
+    assert p['steps'][-1].action == 'verify'
+    return True

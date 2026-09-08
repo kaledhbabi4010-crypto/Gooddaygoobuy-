@@ -1536,3 +1536,291 @@ def run_stage6_tests():
 
     return True
 
+
+# ===== STAGE_7_AUTONOMY_SELF_REPAIR =====
+
+class ErrorAnalysis:
+    def __init__(self, error=None, category=None, retryable=True, severity='medium'):
+        self.error = error
+        self.category = category or self._classify(error)
+        self.retryable = bool(retryable)
+        self.severity = severity
+
+    @staticmethod
+    def _classify(error):
+        if error is None:
+            return 'none'
+
+        text = str(error).lower()
+
+        if 'permission' in text or 'denied' in text:
+            return 'permission'
+        if 'timeout' in text:
+            return 'timeout'
+        if 'network' in text or 'connection' in text:
+            return 'network'
+        if 'not found' in text or 'missing' in text:
+            return 'missing_resource'
+        if 'syntax' in text or 'compile' in text:
+            return 'syntax'
+        if 'validation' in text or 'invalid' in text:
+            return 'validation'
+        return 'unknown'
+
+    def as_dict(self):
+        return {
+            'error': None if self.error is None else str(self.error),
+            'category': self.category,
+            'retryable': self.retryable,
+            'severity': self.severity,
+        }
+
+class RecoveryAction:
+    def __init__(self, name, action=None, max_attempts=1):
+        self.name = str(name)
+        self.action = action
+        self.max_attempts = max(1, int(max_attempts))
+
+    def execute(self):
+        if self.action is None:
+            return True
+        result = self.action()
+        return True if result is None else bool(result)
+
+class RecoveryEngine:
+    def __init__(self, max_retries=2):
+        self.max_retries = max(0, int(max_retries))
+        self.history = []
+
+    def recover(self, error, actions=None):
+        analysis = error if isinstance(error, ErrorAnalysis) else ErrorAnalysis(error)
+
+        if not analysis.retryable:
+            self.history.append({
+                'category': analysis.category,
+                'status': 'blocked',
+            })
+            return False
+
+        actions = list(actions or [])
+
+        for action in actions:
+            attempts = 0
+            while attempts < action.max_attempts:
+                attempts += 1
+                try:
+                    if action.execute():
+                        self.history.append({
+                            'action': action.name,
+                            'attempts': attempts,
+                            'status': 'recovered',
+                        })
+                        return True
+                except Exception as exc:
+                    self.history.append({
+                        'action': action.name,
+                        'attempts': attempts,
+                        'status': 'failed',
+                        'error': str(exc),
+                    })
+
+        self.history.append({
+            'category': analysis.category,
+            'status': 'unrecovered',
+        })
+        return False
+
+class RepairPlanner:
+    def __init__(self):
+        self.plan_history = []
+
+    def plan(self, error):
+        analysis = error if isinstance(error, ErrorAnalysis) else ErrorAnalysis(error)
+
+        if analysis.category == 'permission':
+            actions = ['check_permission', 'retry']
+        elif analysis.category == 'network':
+            actions = ['retry', 'use_local_fallback']
+        elif analysis.category == 'timeout':
+            actions = ['retry_with_limit', 'fallback']
+        elif analysis.category == 'missing_resource':
+            actions = ['verify_resource', 'recover_resource']
+        elif analysis.category == 'syntax':
+            actions = ['validate_source', 'repair_source']
+        elif analysis.category == 'validation':
+            actions = ['revalidate', 'repair_input']
+        else:
+            actions = ['retry', 'diagnose', 'fallback']
+
+        plan = {
+            'category': analysis.category,
+            'actions': actions,
+            'retryable': analysis.retryable,
+        }
+
+        self.plan_history.append(plan)
+        return plan
+
+class RepairExecutor:
+    def __init__(self, recovery=None):
+        self.recovery = recovery or RecoveryEngine()
+        self.execution_history = []
+
+    def execute(self, plan, handlers=None):
+        handlers = dict(handlers or {})
+
+        for action_name in plan.get('actions', []):
+            handler = handlers.get(action_name)
+
+            if handler is None:
+                continue
+
+            action = RecoveryAction(
+                name=action_name,
+                action=handler,
+                max_attempts=1,
+            )
+
+            if self.recovery.recover(
+                ErrorAnalysis(
+                    category=plan.get('category'),
+                    retryable=plan.get('retryable', True),
+                ),
+                [action],
+            ):
+                self.execution_history.append({
+                    'action': action_name,
+                    'status': 'success',
+                })
+                return True
+
+        self.execution_history.append({
+            'status': 'failed',
+        })
+        return False
+
+class AutonomousLoop:
+    def __init__(
+        self,
+        recovery=None,
+        planner=None,
+        executor=None,
+        max_cycles=3,
+    ):
+        self.recovery = recovery or RecoveryEngine()
+        self.planner = planner or RepairPlanner()
+        self.executor = executor or RepairExecutor(self.recovery)
+        self.max_cycles = max(1, int(max_cycles))
+        self.history = []
+
+    def run(self, task, handlers=None):
+        last_error = None
+
+        for cycle in range(1, self.max_cycles + 1):
+            try:
+                result = task()
+                self.history.append({
+                    'cycle': cycle,
+                    'status': 'success',
+                })
+                return {
+                    'success': True,
+                    'result': result,
+                    'cycles': cycle,
+                }
+            except Exception as exc:
+                last_error = exc
+                analysis = ErrorAnalysis(exc)
+                plan = self.planner.plan(analysis)
+
+                self.history.append({
+                    'cycle': cycle,
+                    'status': 'error',
+                    'analysis': analysis.as_dict(),
+                })
+
+                if not analysis.retryable:
+                    break
+
+                repaired = self.executor.execute(
+                    plan,
+                    handlers=handlers,
+                )
+
+                if not repaired and cycle >= self.max_cycles:
+                    break
+
+        return {
+            'success': False,
+            'error': None if last_error is None else str(last_error),
+            'cycles': len(self.history),
+        }
+
+def run_stage7_tests():
+    analysis = ErrorAnalysis(
+        RuntimeError('network timeout'),
+    )
+
+    assert analysis.category == 'timeout'
+    assert analysis.retryable is True
+    assert isinstance(analysis.as_dict(), dict)
+
+    blocked = ErrorAnalysis(
+        RuntimeError('permission denied'),
+        retryable=False,
+    )
+
+    recovery = RecoveryEngine(max_retries=2)
+    assert recovery.recover(blocked) is False
+
+    planner = RepairPlanner()
+    plan = planner.plan(
+        ErrorAnalysis(RuntimeError('network connection failed'))
+    )
+
+    assert plan['category'] == 'network'
+    assert 'retry' in plan['actions']
+
+    calls = []
+
+    def repair_handler():
+        calls.append('repair')
+        return True
+
+    executor = RepairExecutor()
+    assert executor.execute(
+        {'category': 'network', 'actions': ['retry'], 'retryable': True},
+        {'retry': repair_handler},
+    ) is True
+
+    assert calls == ['repair']
+
+    attempts = {'count': 0}
+
+    def task():
+        attempts['count'] += 1
+        if attempts['count'] < 2:
+            raise RuntimeError('temporary network error')
+        return 'SUCCESS'
+
+    loop = AutonomousLoop(max_cycles=3)
+    result = loop.run(
+        task,
+        {'retry': lambda: True},
+    )
+
+    assert result['success'] is True
+    assert result['result'] == 'SUCCESS'
+    assert attempts['count'] == 2
+
+    permanent = AutonomousLoop(max_cycles=2)
+    permanent_result = permanent.run(
+        lambda: (_ for _ in ()).throw(RuntimeError('permanent failure')),
+        {'retry': lambda: True},
+    )
+
+    assert permanent_result['success'] is False
+    assert permanent_result['cycles'] >= 1
+
+    return True
+

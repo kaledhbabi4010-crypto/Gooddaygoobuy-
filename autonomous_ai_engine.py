@@ -970,3 +970,213 @@ def run_stage3_execution_tests():
         assert layer.execution_count == 3
         return True
 
+
+# ===== STAGE_4_RESEARCH_CONNECTIVITY =====
+
+from dataclasses import dataclass as _Stage4Dataclass
+from enum import Enum as _Stage4Enum
+from typing import Any as _Stage4Any
+
+class NetworkMode(_Stage4Enum):
+    LOCAL_ONLY = 'local_only'
+    ALLOW_NETWORK = 'allow_network'
+    DISABLED = 'disabled'
+
+@_Stage4Dataclass(frozen=True)
+class NetworkBudget:
+    max_requests: int = 10
+    used_requests: int = 0
+
+    def can_request(self):
+        return self.used_requests < self.max_requests
+
+    def consume(self, count=1):
+        if count < 0:
+            raise ValueError('INVALID_REQUEST_COUNT')
+        if self.used_requests + count > self.max_requests:
+            raise RuntimeError('NETWORK_BUDGET_EXCEEDED')
+        return NetworkBudget(
+            max_requests=self.max_requests,
+            used_requests=self.used_requests + count,
+        )
+
+class LocalFirstRouter:
+    def __init__(self, network_mode=NetworkMode.LOCAL_ONLY, budget=None):
+        self.network_mode = network_mode
+        self.budget = budget or NetworkBudget()
+
+    def should_use_network(self, network_required=False):
+        if self.network_mode in (NetworkMode.DISABLED, NetworkMode.LOCAL_ONLY):
+            return False
+        if not network_required:
+            return False
+        return self.budget.can_request()
+
+    def consume_network(self):
+        self.budget = self.budget.consume()
+
+class ResearchResult:
+    def __init__(self, query, results=None, source='local', success=True, error=None):
+        self.query = query
+        self.results = list(results or [])
+        self.source = source
+        self.success = success
+        self.error = error
+
+    def to_dict(self):
+        return {
+            'query': self.query,
+            'results': self.results,
+            'source': self.source,
+            'success': self.success,
+            'error': self.error,
+        }
+
+class WebResearch:
+    def __init__(self, router=None, fetcher=None):
+        self.router = router or LocalFirstRouter()
+        self.fetcher = fetcher
+
+    def search(self, query, network_required=False):
+        query = str(query).strip()
+        if not query:
+            return ResearchResult(
+                query='',
+                source='local',
+                success=False,
+                error='EMPTY_QUERY',
+            )
+
+        if not self.router.should_use_network(network_required):
+            return ResearchResult(
+                query=query,
+                source='local',
+                success=True,
+                results=[],
+            )
+
+        if self.fetcher is None:
+            return ResearchResult(
+                query=query,
+                source='network',
+                success=False,
+                error='NO_NETWORK_FETCHER',
+            )
+
+        self.router.consume_network()
+
+        try:
+            results = self.fetcher(query)
+            return ResearchResult(
+                query=query,
+                source='network',
+                success=True,
+                results=results or [],
+            )
+        except Exception as exc:
+            return ResearchResult(
+                query=query,
+                source='network',
+                success=False,
+                error=f'{type(exc).__name__}:{exc}',
+            )
+
+class GitHubReadOnly:
+    def __init__(self, fetcher=None):
+        self.fetcher = fetcher
+
+    def get_file(self, repo, path, ref='main'):
+        if self.fetcher is None:
+            return {
+                'success': False,
+                'repo': repo,
+                'path': path,
+                'ref': ref,
+                'error': 'NO_GITHUB_FETCHER',
+            }
+
+        try:
+            data = self.fetcher(repo, path, ref)
+            return {
+                'success': True,
+                'repo': repo,
+                'path': path,
+                'ref': ref,
+                'data': data,
+            }
+        except Exception as exc:
+            return {
+                'success': False,
+                'repo': repo,
+                'path': path,
+                'ref': ref,
+                'error': f'{type(exc).__name__}:{exc}',
+            }
+
+class UniversalConnector:
+    def __init__(self):
+        self.connectors = {}
+
+    def register(self, name, connector):
+        if not name:
+            raise ValueError('CONNECTOR_NAME_REQUIRED')
+        self.connectors[name] = connector
+
+    def available(self, name):
+        return name in self.connectors
+
+    def get(self, name):
+        return self.connectors.get(name)
+
+def run_stage4_tests():
+    budget = NetworkBudget(max_requests=2)
+    assert budget.can_request() is True
+    budget = budget.consume()
+    assert budget.used_requests == 1
+    budget = budget.consume()
+    assert budget.used_requests == 2
+    assert budget.can_request() is False
+
+    router = LocalFirstRouter(NetworkMode.LOCAL_ONLY, budget)
+    assert router.should_use_network(True) is False
+
+    research = WebResearch(router=router)
+    result = research.search('test query', network_required=True)
+    assert result.success is True
+    assert result.source == 'local'
+    assert result.results == []
+
+    calls = []
+    def fake_fetch(query):
+        calls.append(query)
+        return [{'title': 'verified'}]
+
+    network_router = LocalFirstRouter(
+        NetworkMode.ALLOW_NETWORK,
+        NetworkBudget(max_requests=1),
+    )
+    live_research = WebResearch(
+        router=network_router,
+        fetcher=fake_fetch,
+    )
+    live = live_research.search('hello', network_required=True)
+    assert live.success is True
+    assert live.source == 'network'
+    assert live.results[0]['title'] == 'verified'
+    assert calls == ['hello']
+    assert network_router.budget.used_requests == 1
+
+    github = GitHubReadOnly(
+        fetcher=lambda repo, path, ref: 'content'
+    )
+    gh = github.get_file('owner/repo', 'README.md', 'main')
+    assert gh['success'] is True
+    assert gh['data'] == 'content'
+
+    connector = UniversalConnector()
+    connector.register('test', object())
+    assert connector.available('test') is True
+    assert connector.available('missing') is False
+
+    return True
+

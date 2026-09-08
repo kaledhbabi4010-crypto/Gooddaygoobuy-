@@ -1824,3 +1824,422 @@ def run_stage7_tests():
 
     return True
 
+
+# ===== STAGE_8_HOT_SWAP_HEALTH_CAPABILITY =====
+
+class ComponentStatus:
+    ACTIVE = 'ACTIVE'
+    DISABLED = 'DISABLED'
+    FAILED = 'FAILED'
+    REPLACED = 'REPLACED'
+    NOT_CONFIGURED = 'NOT_CONFIGURED'
+    UNKNOWN = 'UNKNOWN'
+
+class ManagedComponent:
+    def __init__(self, name, component, version='1.0', enabled=True):
+        self.name = str(name)
+        self.component = component
+        self.version = str(version)
+        self.enabled = bool(enabled)
+        self.status = (
+            ComponentStatus.ACTIVE
+            if self.enabled
+            else ComponentStatus.DISABLED
+        )
+
+class ComponentManager:
+    def __init__(self):
+        self.components = {}
+        self.history = []
+
+    def register(self, name, component, version='1.0', enabled=True):
+        item = ManagedComponent(
+            name=name,
+            component=component,
+            version=version,
+            enabled=enabled,
+        )
+        self.components[item.name] = item
+        self.history.append({
+            'operation': 'register',
+            'component': item.name,
+            'version': item.version,
+        })
+        return item
+
+    def get(self, name):
+        return self.components.get(name)
+
+    def status(self, name):
+        item = self.get(name)
+        if item is None:
+            return ComponentStatus.UNKNOWN
+        return item.status
+
+    def disable(self, name):
+        item = self.get(name)
+        if item is None:
+            return False
+        item.enabled = False
+        item.status = ComponentStatus.DISABLED
+        self.history.append({
+            'operation': 'disable',
+            'component': name,
+        })
+        return True
+
+    def enable(self, name):
+        item = self.get(name)
+        if item is None:
+            return False
+        item.enabled = True
+        item.status = ComponentStatus.ACTIVE
+        self.history.append({
+            'operation': 'enable',
+            'component': name,
+        })
+        return True
+
+    def snapshot(self, name):
+        item = self.get(name)
+        if item is None:
+            return None
+        return {
+            'name': item.name,
+            'component': item.component,
+            'version': item.version,
+            'enabled': item.enabled,
+            'status': item.status,
+        }
+
+    def restore(self, snapshot):
+        if snapshot is None:
+            return False
+
+        item = ManagedComponent(
+            name=snapshot['name'],
+            component=snapshot['component'],
+            version=snapshot['version'],
+            enabled=snapshot['enabled'],
+        )
+        item.status = snapshot['status']
+        self.components[item.name] = item
+
+        self.history.append({
+            'operation': 'rollback',
+            'component': item.name,
+            'version': item.version,
+        })
+        return True
+
+    def replace(self, name, component, version='1.0', verify=None):
+        old = self.snapshot(name)
+
+        if old is None:
+            return {
+                'success': False,
+                'status': ComponentStatus.UNKNOWN,
+                'rolled_back': False,
+            }
+
+        candidate = ManagedComponent(
+            name=name,
+            component=component,
+            version=version,
+            enabled=True,
+        )
+
+        self.components[name] = candidate
+
+        verified = True
+
+        if verify is not None:
+            try:
+                verified = bool(verify(candidate.component))
+            except Exception:
+                verified = False
+
+        if verified:
+            candidate.status = ComponentStatus.REPLACED
+            self.history.append({
+                'operation': 'replace',
+                'component': name,
+                'version': version,
+                'status': 'verified',
+            })
+            return {
+                'success': True,
+                'status': ComponentStatus.REPLACED,
+                'rolled_back': False,
+            }
+
+        self.restore(old)
+
+        return {
+            'success': False,
+            'status': old['status'],
+            'rolled_back': True,
+        }
+
+class ComponentHealth:
+    def __init__(self):
+        self.results = {}
+
+    def check(self, name, component):
+        try:
+            if hasattr(component, 'health_check'):
+                result = bool(component.health_check())
+            elif callable(component):
+                result = True
+            else:
+                result = component is not None
+
+            self.results[name] = {
+                'healthy': result,
+                'status': 'healthy' if result else 'failed',
+            }
+            return result
+        except Exception as exc:
+            self.results[name] = {
+                'healthy': False,
+                'status': 'failed',
+                'error': str(exc),
+            }
+            return False
+
+    def is_healthy(self, name):
+        return bool(
+            self.results.get(name, {}).get('healthy', False)
+        )
+
+class ComponentFallback:
+    def __init__(self):
+        self.fallbacks = {}
+        self.history = []
+
+    def register(self, name, component):
+        self.fallbacks[name] = component
+
+    def get(self, name):
+        return self.fallbacks.get(name)
+
+    def recover(self, name):
+        component = self.get(name)
+        if component is None:
+            return None
+        self.history.append({
+            'component': name,
+            'status': 'fallback_selected',
+        })
+        return component
+
+class CapabilityEngine:
+    def __init__(self):
+        self.capabilities = {}
+
+    def register(self, component_name, capabilities):
+        self.capabilities[component_name] = set(capabilities)
+
+    def supports(self, component_name, capability):
+        return capability in self.capabilities.get(component_name, set())
+
+    def candidates(self, capability):
+        result = []
+        for name, capabilities in self.capabilities.items():
+            if capability in capabilities:
+                result.append(name)
+        return result
+
+    def select(self, capability, preferred=None):
+        if preferred and self.supports(preferred, capability):
+            return preferred
+
+        candidates = self.candidates(capability)
+        return candidates[0] if candidates else None
+
+class ComponentRecovery:
+    def __init__(
+        self,
+        manager,
+        health=None,
+        fallback=None,
+        capability=None,
+    ):
+        self.manager = manager
+        self.health = health or ComponentHealth()
+        self.fallback = fallback or ComponentFallback()
+        self.capability = capability or CapabilityEngine()
+        self.history = []
+
+    def recover(self, name, capability=None, verify=None):
+        item = self.manager.get(name)
+
+        if item is None:
+            self.history.append({
+                'component': name,
+                'status': 'missing',
+            })
+            return False
+
+        if self.health.check(name, item.component):
+            self.history.append({
+                'component': name,
+                'status': 'already_healthy',
+            })
+            return True
+
+        candidate_name = self.capability.select(
+            capability,
+            preferred=name,
+        ) if capability else None
+
+        candidate = (
+            self.fallback.get(name)
+            if candidate_name is None
+            else self.fallback.get(candidate_name)
+        )
+
+        if candidate is None:
+            self.history.append({
+                'component': name,
+                'status': 'no_candidate',
+            })
+            return False
+
+        result = self.manager.replace(
+            name,
+            candidate,
+            version='recovered',
+            verify=verify,
+        )
+
+        self.history.append({
+            'component': name,
+            'status': 'recovered' if result['success'] else 'failed',
+            'rolled_back': result['rolled_back'],
+        })
+
+        return bool(result['success'])
+
+def run_stage8_tests():
+    class GoodComponent:
+        def health_check(self):
+            return True
+
+    class BadComponent:
+        def health_check(self):
+            return False
+
+    manager = ComponentManager()
+    original = GoodComponent()
+
+    manager.register(
+        'planner',
+        original,
+        version='1.0',
+    )
+
+    assert manager.status('planner') == ComponentStatus.ACTIVE
+    assert manager.get('planner').version == '1.0'
+
+    health = ComponentHealth()
+    assert health.check('planner', original) is True
+    assert health.is_healthy('planner') is True
+
+    fallback = ComponentFallback()
+    replacement = GoodComponent()
+    fallback.register('planner', replacement)
+    assert fallback.get('planner') is replacement
+
+    capabilities = CapabilityEngine()
+    capabilities.register('planner', ['planning', 'execution'])
+    capabilities.register('backup', ['planning'])
+
+    assert capabilities.supports('planner', 'planning')
+    assert capabilities.select('planning', 'planner') == 'planner'
+
+    # Successful hot swap.
+    result = manager.replace(
+        'planner',
+        replacement,
+        version='2.0',
+        verify=lambda component: component.health_check(),
+    )
+
+    assert result['success'] is True
+    assert result['rolled_back'] is False
+    assert manager.get('planner').version == '2.0'
+    assert manager.get('planner').status == ComponentStatus.REPLACED
+
+    # Failed verification MUST rollback.
+    bad = BadComponent()
+    failed = manager.replace(
+        'planner',
+        bad,
+        version='broken',
+        verify=lambda component: component.health_check(),
+    )
+
+    assert failed['success'] is False
+    assert failed['rolled_back'] is True
+    assert manager.get('planner').version == '2.0'
+    assert manager.get('planner').component is replacement
+
+    # Disabled components are represented explicitly.
+    assert manager.disable('planner') is True
+    assert manager.status('planner') == ComponentStatus.DISABLED
+    assert manager.enable('planner') is True
+    assert manager.status('planner') == ComponentStatus.ACTIVE
+
+    # Recovery through fallback.
+    broken = BadComponent()
+    manager.replace(
+        'planner',
+        broken,
+        version='broken',
+        verify=lambda component: True,
+    )
+
+    # The intentionally broken component is now managed.
+    manager.get('planner').status = ComponentStatus.FAILED
+
+    recovery = ComponentRecovery(
+        manager=manager,
+        health=ComponentHealth(),
+        fallback=fallback,
+        capability=capabilities,
+    )
+
+    assert recovery.recover(
+        'planner',
+        verify=lambda component: component.health_check(),
+    ) is True
+
+    assert manager.get('planner').component is replacement
+
+    # Failed replacement with a bad fallback must rollback.
+    bad_fallback = BadComponent()
+    fallback.register('planner', bad_fallback)
+
+    manager.replace(
+        'planner',
+        broken,
+        version='broken-again',
+        verify=lambda component: True,
+    )
+
+    manager.get('planner').status = ComponentStatus.FAILED
+
+    before = manager.snapshot('planner')
+
+    assert recovery.recover(
+        'planner',
+        verify=lambda component: component.health_check(),
+    ) is False
+
+    after = manager.snapshot('planner')
+    assert after['component'] is before['component']
+    assert after['version'] == before['version']
+
+    return True
+

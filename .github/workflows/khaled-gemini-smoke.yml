@@ -80,6 +80,7 @@ jobs:
                       },
                       {
                           "role": "user",
+                          "content": "Reply with a short confirmation that Gemini is reachable.",
                       },
                   ],
                   temperature=0,

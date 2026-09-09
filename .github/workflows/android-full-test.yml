@@ -24,6 +24,15 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Verify CI Java
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "JAVA_HOME=$JAVA_HOME"
+          test -x "$JAVA_HOME/bin/java"
+          "$JAVA_HOME/bin/java" -version
+          echo "CI JAVA: PASS"
+
       - name: Build both APKs
         shell: bash
         run: |
@@ -36,7 +45,8 @@ jobs:
           test -d android_app
           test -f android_app/app/build.gradle || test -f android_app/app/build.gradle.kts
 
-          gradle -p android_app clean assembleDebug --no-daemon
+          gradle -p android_app clean assembleDebug --no-daemon \
+            -Dorg.gradle.java.home="$JAVA_HOME"
 
           echo "=================================================="
           echo "BUILD khaled_android"
@@ -45,7 +55,8 @@ jobs:
           test -d khaled_android
           test -f khaled_android/app/build.gradle || test -f khaled_android/app/build.gradle.kts
 
-          gradle -p khaled_android clean assembleDebug --no-daemon
+          gradle -p khaled_android clean assembleDebug --no-daemon \
+            -Dorg.gradle.java.home="$JAVA_HOME"
 
           echo "=================================================="
           echo "APK VERIFICATION"

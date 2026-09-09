@@ -14,24 +14,51 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
       - name: Build both APKs
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          chmod +x android_app/gradlew khaled_android/gradlew
+          echo "=================================================="
+          echo "BUILD android_app"
+          echo "=================================================="
 
-          cd android_app
-          ./gradlew clean assembleDebug --no-daemon
+          test -d android_app
+          test -f android_app/app/build.gradle || test -f android_app/app/build.gradle.kts
 
-          cd ../khaled_android
-          ./gradlew clean assembleDebug --no-daemon
+          gradle -p android_app clean assembleDebug --no-daemon
 
+          echo "=================================================="
+          echo "BUILD khaled_android"
+          echo "=================================================="
+
+          test -d khaled_android
+          test -f khaled_android/app/build.gradle || test -f khaled_android/app/build.gradle.kts
+
+          gradle -p khaled_android clean assembleDebug --no-daemon
+
+          echo "=================================================="
+          echo "APK VERIFICATION"
+          echo "=================================================="
+
+          test -f android_app/app/build/outputs/apk/debug/app-debug.apk
+          test -f khaled_android/app/build/outputs/apk/debug/app-debug.apk
+
+          unzip -t android_app/app/build/outputs/apk/debug/app-debug.apk
+          unzip -t khaled_android/app/build/outputs/apk/debug/app-debug.apk
+
+          ls -lh android_app/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh khaled_android/app/build/outputs/apk/debug/app-debug.apk
       - name: Verify APKs
         shell: bash
         run: |

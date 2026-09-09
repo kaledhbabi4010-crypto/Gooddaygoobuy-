@@ -14,7 +14,7 @@ jobs:
   browserstack-real-android:
 
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     env:
       BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
@@ -22,31 +22,36 @@ jobs:
 
     steps:
 
-      # ------------------------------------------------------
-      # CHECKOUT
-      # ------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # ------------------------------------------------------
-      # CHECK SECRETS WITHOUT PRINTING THEM
+      # DEBUG REPOSITORY STRUCTURE
       # ------------------------------------------------------
-      - name: Validate BrowserStack credentials
+      - name: Inspect Android project
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
-          if [ -z "$BROWSERSTACK_USERNAME" ]; then
-            echo "ERROR: BROWSERSTACK_USERNAME secret is missing."
-            exit 1
-          fi
+          echo "=== ROOT ==="
+          pwd
 
-          if [ -z "$BROWSERSTACK_ACCESS_KEY" ]; then
-            echo "ERROR: BROWSERSTACK_ACCESS_KEY secret is missing."
-            exit 1
-          fi
+          echo "=== TOP LEVEL ==="
+          find . -maxdepth 2 -type f \
+            -name "settings.gradle" \
+            -o -name "settings.gradle.kts" \
+            -o -name "build.gradle" \
+            -o -name "build.gradle.kts" \
+            -o -name "gradlew" \
+            -o -name "*.apk" \
+            -print
 
-          echo "BrowserStack credentials detected."
+          echo "=== ANDROID DIRECTORIES ==="
+          find . -maxdepth 3 -type d \
+            -name "android_app" \
+            -o -name "khaled_android" \
+            -o -name "app" \
+            -print
 
       # ------------------------------------------------------
       # JAVA
@@ -59,51 +64,135 @@ jobs:
           cache: gradle
 
       # ------------------------------------------------------
-      # BUILD BOTH APKs
+      # ANDROID SDK
       # ------------------------------------------------------
-      - name: Build Android APKs
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ------------------------------------------------------
+      # BUILD ANDROID APP 1
+      # ------------------------------------------------------
+      - name: Build android_app APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [ ! -d "android_app" ]; then
+            echo "ERROR: android_app directory not found."
+            find . -maxdepth 3 -type f | head -300
+            exit 1
+          fi
+
+          cd android_app
+
+          if [ ! -f "gradlew" ]; then
+            echo "ERROR: android_app/gradlew not found."
+            ls -la
+            exit 1
+          fi
+
+          chmod +x gradlew
+
+          echo "=== GRADLE VERSION ==="
+          ./gradlew --version
+
+          echo "=== BUILD ==="
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --info
+
+          echo "=== APK ==="
+          find app/build/outputs -type f -name "*.apk" -print
+
+      # ------------------------------------------------------
+      # BUILD ANDROID APP 2
+      # ------------------------------------------------------
+      - name: Build khaled_android APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [ ! -d "khaled_android" ]; then
+            echo "ERROR: khaled_android directory not found."
+            find . -maxdepth 3 -type f | head -300
+            exit 1
+          fi
+
+          cd khaled_android
+
+          if [ ! -f "gradlew" ]; then
+            echo "ERROR: khaled_android/gradlew not found."
+            ls -la
+            exit 1
+          fi
+
+          chmod +x gradlew
+
+          echo "=== GRADLE VERSION ==="
+          ./gradlew --version
+
+          echo "=== BUILD ==="
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --info
+
+          echo "=== APK ==="
+          find app/build/outputs -type f -name "*.apk" -print
+
+      # ------------------------------------------------------
+      # APK VALIDATION
+      # ------------------------------------------------------
+      - name: Validate APKs
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          test -f android_app/app/build/outputs/apk/debug/app-debug.apk
+          test -f khaled_android/app/build/outputs/apk/debug/app-debug.apk
+
+          ls -lh \
+            android_app/app/build/outputs/apk/debug/app-debug.apk \
+            khaled_android/app/build/outputs/apk/debug/app-debug.apk
+
+      # ------------------------------------------------------
+      # BROWSERSTACK CREDENTIAL CHECK
+      # ------------------------------------------------------
+      - name: Validate BrowserStack credentials
         shell: bash
         run: |
           set -e
 
-          echo "Building android_app..."
-          cd android_app
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
-          cd ..
+          test -n "$BROWSERSTACK_USERNAME"
+          test -n "$BROWSERSTACK_ACCESS_KEY"
 
-          echo "Building khaled_android..."
-          cd khaled_android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
-          cd ..
-
-          echo "APK files:"
-          find . -path "*/build/outputs/apk/debug/*.apk" -type f -print
+          echo "BrowserStack credentials detected."
 
       # ------------------------------------------------------
-      # INSTALL PYTHON TEST DEPENDENCIES
+      # PYTHON
       # ------------------------------------------------------
       - name: Install Appium client
         shell: bash
         run: |
-          python -m pip install --disable-pip-version-check \
+          python -m pip install \
+            --disable-pip-version-check \
             --no-cache-dir \
-            appium-python-client
+            appium-python-client \
+            requests
 
       # ------------------------------------------------------
-      # CREATE REAL DEVICE TEST
+      # BROWSERSTACK REAL DEVICE TEST
       # ------------------------------------------------------
-      - name: Create BrowserStack real-device test
+      - name: Run BrowserStack real Android test
         shell: bash
         run: |
 
-          cat > browserstack_real_test.py <<'PYTEST'
+          cat > browserstack_real_test.py <<'PY'
+
           import os
           import sys
-          import json
           import time
-          import base64
           import requests
 
           from appium import webdriver
@@ -111,67 +200,23 @@ jobs:
 
 
           USER = os.environ["BROWSERSTACK_USERNAME"]
-          KEY  = os.environ["BROWSERSTACK_ACCESS_KEY"]
+          KEY = os.environ["BROWSERSTACK_ACCESS_KEY"]
 
-          BS_API = "https://api-cloud.browserstack.com"
-
-
-          def bs_auth():
-              return (USER, KEY)
+          API = "https://api-cloud.browserstack.com"
 
 
-          def get_android_device():
+          def upload_apk(path):
 
-              r = requests.get(
-                  BS_API + "/app-automate/devices.json",
-                  auth=bs_auth(),
-                  timeout=30
-              )
+              print("Uploading APK:", path)
 
-              r.raise_for_status()
-
-              devices = r.json()
-
-              android = [
-                  d for d in devices
-                  if str(d.get("os", "")).lower() == "android"
-                  and d.get("realMobile") is True
-              ]
-
-              if not android:
-                  raise RuntimeError(
-                      "BrowserStack returned no real Android devices."
-                  )
-
-              # Prefer a common modern device when available.
-              preferred = [
-                  "Google Pixel 7",
-                  "Google Pixel 6",
-                  "Samsung Galaxy S22",
-                  "Samsung Galaxy S21",
-                  "Google Pixel 5"
-              ]
-
-              for name in preferred:
-                  for d in android:
-                      if d.get("device") == name:
-                          return d
-
-              return android[0]
-
-
-          def upload_apk(apk):
-
-              print("Uploading:", apk)
-
-              with open(apk, "rb") as f:
+              with open(path, "rb") as f:
 
                   r = requests.post(
-                      BS_API + "/app-automate/upload",
-                      auth=bs_auth(),
+                      API + "/app-automate/upload",
+                      auth=(USER, KEY),
                       files={
                           "file": (
-                              os.path.basename(apk),
+                              os.path.basename(path),
                               f,
                               "application/vnd.android.package-archive"
                           )
@@ -179,39 +224,89 @@ jobs:
                       timeout=180
                   )
 
+              print("Upload HTTP:", r.status_code)
+
               r.raise_for_status()
 
               data = r.json()
 
-              app_url = data.get("app_url")
-
-              if not app_url:
+              if "app_url" not in data:
                   raise RuntimeError(
-                      "BrowserStack did not return app_url."
+                      "BrowserStack did not return app_url: "
+                      + str(data)
                   )
 
-              print("BrowserStack app:", app_url)
-
-              return app_url
+              return data["app_url"]
 
 
-          def test_apk(apk, label):
+          def get_devices():
 
-              device = get_android_device()
+              r = requests.get(
+                  API + "/app-automate/devices.json",
+                  auth=(USER, KEY),
+                  timeout=30
+              )
 
-              print("")
-              print("==========================================")
-              print("TEST:", label)
+              print("Device API HTTP:", r.status_code)
+
+              r.raise_for_status()
+
+              return r.json()
+
+
+          def choose_device():
+
+              devices = get_devices()
+
+              real_android = [
+                  d for d in devices
+                  if str(d.get("os", "")).lower() == "android"
+                  and d.get("realMobile") is True
+              ]
+
+              if not real_android:
+                  raise RuntimeError(
+                      "No real Android device was returned by BrowserStack."
+                  )
+
+              # Prefer widely available devices.
+              preferred = [
+                  "Google Pixel 7",
+                  "Google Pixel 6",
+                  "Google Pixel 5",
+                  "Samsung Galaxy S22",
+                  "Samsung Galaxy S21"
+              ]
+
+              for p in preferred:
+                  for d in real_android:
+                      if d.get("device") == p:
+                          return d
+
+              return real_android[0]
+
+
+          def run_test(apk, name):
+
+              device = choose_device()
+
+              print()
+              print("======================================")
+              print("APP:", name)
               print("DEVICE:", device.get("device"))
-              print("ANDROID:", device.get("os_version"))
-              print("REAL DEVICE:", device.get("realMobile"))
-              print("==========================================")
+              print("OS:", device.get("os_version"))
+              print("REAL:", device.get("realMobile"))
+              print("======================================")
 
               app_url = upload_apk(apk)
 
               options = UiAutomator2Options()
 
-              options.set_capability("platformName", "Android")
+              options.set_capability(
+                  "platformName",
+                  "Android"
+              )
+
               options.set_capability(
                   "appium:automationName",
                   "UiAutomator2"
@@ -238,13 +333,12 @@ jobs:
                       "userName": USER,
                       "accessKey": KEY,
                       "projectName": "Gooddaygoobuy",
-                      "buildName": "GitHub Real Android",
-                      "sessionName": label,
+                      "buildName": "Real Android",
+                      "sessionName": name,
                       "debug": True,
                       "networkLogs": True,
                       "video": True,
-                      "appiumLogs": True,
-                      "idleTimeout": 120
+                      "appiumLogs": True
                   }
               )
 
@@ -259,117 +353,89 @@ jobs:
 
                   print("REAL DEVICE SESSION STARTED")
 
-                  time.sleep(5)
+                  time.sleep(8)
 
-                  # Screenshot
-                  screenshot = f"{label}_screenshot.png"
-                  driver.save_screenshot(screenshot)
+                  screenshot = name + "_screenshot.png"
 
-                  # UI hierarchy
-                  source = f"{label}_ui.xml"
-
-                  with open(source, "w", encoding="utf-8") as f:
-                      f.write(driver.page_source)
-
-                  # Basic runtime evidence
-                  info = {
-                      "label": label,
-                      "device": device,
-                      "current_package": None,
-                      "current_activity": None
-                  }
-
-                  try:
-                      info["current_package"] = (
-                          driver.current_package
-                      )
-                  except Exception:
-                      pass
-
-                  try:
-                      info["current_activity"] = (
-                          driver.current_activity
-                      )
-                  except Exception:
-                      pass
+                  driver.save_screenshot(
+                      screenshot
+                  )
 
                   with open(
-                      f"{label}_runtime.json",
+                      name + "_ui.xml",
                       "w",
                       encoding="utf-8"
                   ) as f:
-                      json.dump(
-                          info,
-                          f,
-                          indent=2
-                      )
+                      f.write(driver.page_source)
 
-                  print("SCREENSHOT:", screenshot)
-                  print("UI SOURCE:", source)
-                  print("REAL DEVICE TEST: PASSED")
+                  print("Evidence captured.")
+                  print("TEST PASSED:", name)
 
               finally:
 
                   if driver:
+
                       try:
                           driver.quit()
                       except Exception:
                           pass
 
 
-          apk1 = (
-              "android_app/app/build/outputs/apk/debug/"
-              "app-debug.apk"
-          )
+          tests = [
+              (
+                  "android_app/app/build/outputs/apk/debug/app-debug.apk",
+                  "android_app"
+              ),
+              (
+                  "khaled_android/app/build/outputs/apk/debug/app-debug.apk",
+                  "khaled_android"
+              )
+          ]
 
-          apk2 = (
-              "khaled_android/app/build/outputs/apk/debug/"
-              "app-debug.apk"
-          )
 
-          failures = []
+          failed = []
 
-          for apk, label in [
-              (apk1, "android_app"),
-              (apk2, "khaled_android")
-          ]:
-
-              if not os.path.exists(apk):
-                  print("APK missing:", apk)
-                  failures.append(label)
-                  continue
+          for apk, name in tests:
 
               try:
-                  test_apk(apk, label)
-              except Exception as e:
-                  print("TEST FAILED:", label)
-                  print(str(e))
-                  failures.append(label)
 
-          if failures:
-              print("")
-              print("FAILED APPS:", failures)
+                  if not os.path.isfile(apk):
+                      raise RuntimeError(
+                          "APK not found: " + apk
+                      )
+
+                  run_test(apk, name)
+
+              except Exception as e:
+
+                  print()
+                  print("FAILED:", name)
+                  print(type(e).__name__)
+                  print(str(e))
+
+                  failed.append(name)
+
+
+          if failed:
+
+              print()
+              print("FAILED APPS:", failed)
               sys.exit(1)
 
-          print("")
-          print("==========================================")
-          print("ALL REAL ANDROID TESTS PASSED")
-          print("==========================================")
 
-          PYTEST
+          print()
+          print("======================================")
+          print("ALL REAL DEVICE TESTS PASSED")
+          print("======================================")
 
-      # ------------------------------------------------------
-      # RUN
-      # ------------------------------------------------------
-      - name: Run on BrowserStack physical Android
-        shell: bash
-        run: |
+          PY
+
           python browserstack_real_test.py
 
       # ------------------------------------------------------
-      # COLLECT EVIDENCE
+      # EVIDENCE
       # ------------------------------------------------------
-      - name: Upload real-device evidence
+      - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -377,6 +443,5 @@ jobs:
           path: |
             *_screenshot.png
             *_ui.xml
-            *_runtime.json
           if-no-files-found: warn
           retention-days: 7

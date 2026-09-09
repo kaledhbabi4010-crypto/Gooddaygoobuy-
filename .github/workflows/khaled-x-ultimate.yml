@@ -1,0 +1,376 @@
+name: KHALED X Ultimate Autonomous Repair
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+
+concurrency:
+  group: khaled-x-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MAX_ROUNDS: "12"
+  GEMINI_MODEL: "gemini-2.5-flash"
+
+jobs:
+
+  autonomous-repair:
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 360
+
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+      BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Android packages
+        shell: bash
+        run: |
+          set -e
+
+          yes | sdkmanager --licenses \
+            >/dev/null 2>&1 || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Secret injection test
+        shell: bash
+        run: |
+          set -e
+
+          test -n "$GEMINI_API_KEY"
+          test -n "$BROWSERSTACK_USERNAME"
+          test -n "$BROWSERSTACK_ACCESS_KEY"
+
+          echo "SECRET_REFERENCES_RESOLVED=true"
+
+          echo \
+            "Secret values are intentionally never printed."
+
+      - name: Install AI Code Reviewer
+        shell: bash
+        run: |
+          set -e
+
+          python -m pip install --upgrade pip
+
+          test \
+            -f ".khaled/ai-code-reviewer/pyproject.toml"
+
+          pip install \
+            -e ".khaled/ai-code-reviewer"
+
+      - name: Validate KHALED
+        shell: bash
+        run: |
+          set -e
+
+          python -m py_compile \
+            .khaled/runtime/khaled_repair.py
+
+      - name: Autonomous Build Test Repair
+        shell: bash
+        run: |
+
+          set +e
+
+          mkdir -p \
+            .khaled/evidence
+
+          ROUND=1
+          VERIFIED=false
+
+          echo \
+            "KHALED_STARTED=true" \
+            > .khaled/evidence/state.txt
+
+          while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
+
+            echo ""
+            echo "=============================================="
+            echo "KHALED ROUND $ROUND / $MAX_ROUNDS"
+            echo "=============================================="
+
+            rm -f \
+              .khaled/evidence/build.log \
+              .khaled/evidence/test.log \
+              .khaled/evidence/repair.log \
+              .khaled/evidence/verified.txt
+
+            chmod +x ./gradlew \
+              2>/dev/null || true
+
+            # --------------------------------------------------
+            # REAL BUILD
+            # --------------------------------------------------
+
+            ./gradlew \
+              --no-daemon \
+              --stacktrace \
+              assembleDebug \
+              > .khaled/evidence/build.log 2>&1
+
+            BUILD_RC=$?
+
+            echo \
+              "BUILD_RC=$BUILD_RC" \
+              | tee -a .khaled/evidence/state.txt
+
+            # --------------------------------------------------
+            # REAL UNIT TEST
+            # --------------------------------------------------
+
+            ./gradlew \
+              --no-daemon \
+              --stacktrace \
+              testDebugUnitTest \
+              > .khaled/evidence/test.log 2>&1
+
+            TEST_RC=$?
+
+            echo \
+              "TEST_RC=$TEST_RC" \
+              | tee -a .khaled/evidence/state.txt
+
+            # --------------------------------------------------
+            # REAL APK DISCOVERY
+            # --------------------------------------------------
+
+            APK=""
+
+            if [ "$BUILD_RC" -eq 0 ]; then
+
+              APK=$(find . \
+                -type f \
+                -name "*.apk" \
+                -not -path "./.gradle/*" \
+                | head -n 1)
+
+            fi
+
+            # --------------------------------------------------
+            # VERIFIED SUCCESS
+            # --------------------------------------------------
+
+            if [ "$BUILD_RC" -eq 0 ] && \
+               [ "$TEST_RC" -eq 0 ] && \
+               [ -n "$APK" ]; then
+
+              echo \
+                "KHALED_VERIFIED_BUILD=true" \
+                > .khaled/evidence/verified.txt
+
+              echo \
+                "APK_PATH=$APK" \
+                >> .khaled/evidence/verified.txt
+
+              sha256sum "$APK" \
+                > .khaled/evidence/apk.sha256
+
+              VERIFIED=true
+
+              echo ""
+              echo "REAL BUILD: PASS"
+              echo "REAL TEST : PASS"
+              echo "REAL APK  : FOUND"
+              echo "TRUTH GATE: VERIFIED"
+
+              break
+
+            fi
+
+            # --------------------------------------------------
+            # REAL FAILURE
+            # --------------------------------------------------
+
+            echo \
+              "REAL_FAILURE_DETECTED=true" \
+              > .khaled/evidence/failure.txt
+
+            # --------------------------------------------------
+            # GEMINI REPAIR
+            # --------------------------------------------------
+
+            python \
+              .khaled/runtime/khaled_repair.py \
+              --repo "$GITHUB_REPOSITORY" \
+              --round "$ROUND" \
+              --build-log \
+              ".khaled/evidence/build.log" \
+              --test-log \
+              ".khaled/evidence/test.log" \
+              > .khaled/evidence/repair.log 2>&1
+
+            REPAIR_RC=$?
+
+            cat .khaled/evidence/repair.log
+
+            echo \
+              "REPAIR_RC=$REPAIR_RC" \
+              >> .khaled/evidence/state.txt
+
+            if [ "$REPAIR_RC" -ne 0 ]; then
+
+              echo \
+                "AI_REPAIR_NOT_PROVEN=true" \
+                > .khaled/evidence/stop.txt
+
+              break
+
+            fi
+
+            # --------------------------------------------------
+            # PATCH INTEGRITY
+            # --------------------------------------------------
+
+            git diff --check
+
+            if [ "$?" -ne 0 ]; then
+
+              echo \
+                "INVALID_PATCH=true" \
+                > .khaled/evidence/stop.txt
+
+              git reset --hard HEAD
+
+              break
+
+            fi
+
+            # --------------------------------------------------
+            # SOURCE CHANGE REQUIRED
+            # --------------------------------------------------
+
+            git diff --quiet
+
+            if [ "$?" -eq 0 ]; then
+
+              echo \
+                "NO_SOURCE_CHANGE=true" \
+                > .khaled/evidence/stop.txt
+
+              break
+
+            fi
+
+            # --------------------------------------------------
+            # COMMIT
+            # --------------------------------------------------
+
+            git config \
+              user.name \
+              "KHALED Autonomous Repair"
+
+            git config \
+              user.email \
+              "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git add -A
+
+            git commit \
+              -m \
+              "khaled: autonomous repair round $ROUND"
+
+            COMMIT_RC=$?
+
+            if [ "$COMMIT_RC" -ne 0 ]; then
+
+              echo \
+                "COMMIT_FAILED=true" \
+                > .khaled/evidence/stop.txt
+
+              break
+
+            fi
+
+            # --------------------------------------------------
+            # PUSH
+            # --------------------------------------------------
+
+            git push \
+              origin \
+              "HEAD:${GITHUB_REF_NAME}"
+
+            PUSH_RC=$?
+
+            if [ "$PUSH_RC" -ne 0 ]; then
+
+              echo \
+                "PUSH_FAILED=true" \
+                > .khaled/evidence/stop.txt
+
+              break
+
+            fi
+
+            ROUND=$((ROUND + 1))
+
+          done
+
+          # ----------------------------------------------------
+          # FINAL TRUTH GATE
+          # ----------------------------------------------------
+
+          echo ""
+          echo "=============================================="
+          echo "KHALED FINAL TRUTH GATE"
+          echo "=============================================="
+
+          if [ "$VERIFIED" = true ] && \
+             [ -f ".khaled/evidence/verified.txt" ] && \
+             grep -qx \
+             "KHALED_VERIFIED_BUILD=true" \
+             ".khaled/evidence/verified.txt"; then
+
+            echo "KHALED_RESULT=VERIFIED"
+            exit 0
+
+          fi
+
+          echo "KHALED_RESULT=NOT_VERIFIED"
+          echo \
+            "No success claim without real evidence."
+
+          exit 1
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khaled-x-evidence-${{ github.run_number }}
+          path: .khaled/evidence
+          if-no-files-found: warn

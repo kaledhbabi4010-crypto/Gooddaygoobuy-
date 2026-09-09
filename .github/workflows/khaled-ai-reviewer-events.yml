@@ -1,0 +1,95 @@
+name: KHALED AI Reviewer Commands
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+
+  automatic-review:
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed'
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: AI Code Reviewer
+        uses: mara-werils/ai-code-reviewer@v0.4.0
+        with:
+          github_token: ${{ github.token }}
+          provider: openai
+          review_style: thorough
+          max_comments: "50"
+          auto_summarize: "true"
+          suggest_tests: "true"
+          custom_instructions: |
+            You are operating as KHALED's autonomous repair reviewer.
+
+            RULES:
+            1. Never claim a fix without evidence.
+            2. Analyze the actual changed files.
+            3. Prioritize build failures and runtime failures.
+            4. Do not invent APIs, classes, files, commands, or test results.
+            5. Prefer minimal safe fixes.
+            6. Preserve existing architecture.
+            7. Do not create a new AI system.
+            8. The Android application itself is the target.
+            9. Build/test evidence is authoritative.
+            10. Mark uncertainty explicitly.
+            11. Review security problems.
+            12. Review Gradle/Android configuration.
+            13. Review manifests, dependencies and Kotlin/Java code.
+            14. Do not declare SUCCESS merely because code looks correct.
+
+  command:
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      (
+        startsWith(github.event.comment.body, '/fix') ||
+        startsWith(github.event.comment.body, '/review') ||
+        startsWith(github.event.comment.body, '/ask')
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: AI Code Reviewer Command
+        uses: mara-werils/ai-code-reviewer@v0.4.0
+        with:
+          github_token: ${{ github.token }}
+          provider: openai
+          review_style: thorough
+          max_comments: "50"
+          auto_summarize: "true"
+          suggest_tests: "true"
+          custom_instructions: |
+            KHALED AUTONOMOUS REPAIR MODE.
+
+            Only modify code when the user explicitly requested /fix.
+
+            For /fix:
+            - inspect the latest review
+            - inspect the actual repository
+            - fix only verified problems
+            - preserve architecture
+            - never fabricate tests
+            - never report success without actual evidence
+
+            For /review:
+            - analyze actual changed code
+            - identify real defects
+            - prioritize Android build/runtime problems
+
+            For /ask:
+            - answer from repository evidence
+            - clearly distinguish evidence from inference

@@ -1,0 +1,82 @@
+name: 'AI Code Reviewer'
+description: >
+  Automated AI code review for pull requests. Works with any LLM: GPT-4o, Claude, Llama, Gemini, Ollama.
+  Posts inline comments with severity levels, security checks, suggested fixes, and risk assessment.
+  One-line setup, zero config. Free and open source.
+author: 'mara-werils'
+
+branding:
+  icon: 'code'
+  color: 'purple'
+
+inputs:
+  github_token:
+    description: 'GitHub token for API access (defaults to github.token)'
+    required: false
+    default: ${{ github.token }}
+  provider:
+    description: 'LLM provider: openai, anthropic, groq, google, ollama'
+    required: false
+    default: 'openai'
+  model:
+    description: 'Model name (auto-selected per provider if empty)'
+    required: false
+    default: ''
+  api_base_url:
+    description: 'Custom API base URL (for OpenAI-compatible providers, Ollama, vLLM, LiteLLM)'
+    required: false
+    default: ''
+  language:
+    description: 'Language for review comments (en, zh, ja, ko, es, de, fr, ru, pt)'
+    required: false
+    default: 'en'
+  review_style:
+    description: 'Review style: concise, thorough, minimal'
+    required: false
+    default: 'concise'
+  max_comments:
+    description: 'Maximum number of review comments (1-50)'
+    required: false
+    default: '15'
+  custom_instructions:
+    description: 'Additional instructions for the reviewer (team conventions, coding standards)'
+    required: false
+    default: ''
+  auto_summarize:
+    description: 'Add a PR summary with risk assessment'
+    required: false
+    default: 'true'
+  suggest_tests:
+    description: 'Suggest missing test coverage'
+    required: false
+    default: 'true'
+  label_pr:
+    description: 'Automatically label PR by type (bugfix, feature, refactor, etc.)'
+    required: false
+    default: 'false'
+
+outputs:
+  summary:
+    description: 'Review summary text'
+  risk_level:
+    description: 'Risk level: low, medium, high'
+  comments_count:
+    description: 'Number of review comments posted'
+  cost_usd:
+    description: 'Cost of the review in USD'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  env:
+    GITHUB_TOKEN: ${{ inputs.github_token }}
+    INPUT_PROVIDER: ${{ inputs.provider }}
+    INPUT_MODEL: ${{ inputs.model }}
+    INPUT_API_BASE_URL: ${{ inputs.api_base_url }}
+    INPUT_LANGUAGE: ${{ inputs.language }}
+    INPUT_REVIEW_STYLE: ${{ inputs.review_style }}
+    INPUT_MAX_COMMENTS: ${{ inputs.max_comments }}
+    INPUT_CUSTOM_INSTRUCTIONS: ${{ inputs.custom_instructions }}
+    INPUT_AUTO_SUMMARIZE: ${{ inputs.auto_summarize }}
+    INPUT_SUGGEST_TESTS: ${{ inputs.suggest_tests }}
+    INPUT_LABEL_PR: ${{ inputs.label_pr }}

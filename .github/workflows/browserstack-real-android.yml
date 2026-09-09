@@ -29,33 +29,17 @@ jobs:
       # DEBUG REPOSITORY STRUCTURE
       # ------------------------------------------------------
       - name: Inspect Android project
-        shell: bash
         run: |
-          set -euxo pipefail
-
-          echo "=== ROOT ==="
+          echo "=== Android project inspection ==="
           pwd
-
-          echo "=== TOP LEVEL ==="
-          find . -maxdepth 2 -type f \
-            -name "settings.gradle" \
-            -o -name "settings.gradle.kts" \
-            -o -name "build.gradle" \
-            -o -name "build.gradle.kts" \
-            -o -name "gradlew" \
-            -o -name "*.apk" \
-            -print
-
-          echo "=== ANDROID DIRECTORIES ==="
-          find . -maxdepth 3 -type d \
-            -name "android_app" \
-            -o -name "khaled_android" \
-            -o -name "app" \
-            -print
-
-      # ------------------------------------------------------
-      # JAVA
-      # ------------------------------------------------------
+          echo "--- Repository ---"
+          ls -la
+          echo "--- Android projects ---"
+          [ -d android_app ] && echo "android_app: FOUND" || echo "android_app: NOT FOUND"
+          [ -d khaled_android ] && echo "khaled_android: FOUND" || echo "khaled_android: NOT FOUND"
+          echo "--- Android Gradle files ---"
+          find android_app khaled_android -maxdepth 3 -type f \-name "build.gradle" -o -name "build.gradle.kts" -o -name "settings.gradle" -o -name "settings.gradle.kts" \ 2>/dev/null || true
+          echo "Inspection completed."
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:

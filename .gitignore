@@ -3,3 +3,12 @@ obj/
 .nuget/
 artifacts/
 *.user
+
+# Local Android machine configuration
+local.properties
+.gradle/
+**/.gradle/
+build/
+**/build/
+tools/
+evidence/

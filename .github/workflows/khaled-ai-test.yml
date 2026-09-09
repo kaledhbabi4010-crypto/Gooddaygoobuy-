@@ -30,14 +30,32 @@ jobs:
       - name: Build application
         shell: bash
         run: |
+          set -e
+          echo "=== Detecting Android project ==="
+
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew assembleDebug --stacktrace
+          elif [ -f "./app/gradlew" ]; then
+            cd app
+            chmod +x gradlew
+            ./gradlew assembleDebug --stacktrace
           else
-            echo "NO_GRADLE_PROJECT_FOUND"
-            exit 1
-          fi
+            echo "Searching Gradle wrapper..."
+            WRAPPER=$(find . -type f -name gradlew | head -1)
 
+            if [ -n "$WRAPPER" ]; then
+              DIR=$(dirname "$WRAPPER")
+              cd "$DIR"
+              chmod +x gradlew
+              ./gradlew assembleDebug --stacktrace
+            else
+              echo "❌ NO_GRADLE_WRAPPER_FOUND"
+              echo "Project files:"
+              find . -maxdepth 3 -type f | sort | head -300
+              exit 1
+            fi
+          fi
       - name: Start Android Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:

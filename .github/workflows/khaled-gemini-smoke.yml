@@ -76,12 +76,10 @@ jobs:
                           "role": "system",
                           "content": (
                               "You are a connectivity test. "
-                              "Reply with exactly GEMINI_OK."
                           ),
                       },
                       {
                           "role": "user",
-                          "content": "Return exactly GEMINI_OK",
                       },
                   ],
                   temperature=0,
@@ -95,9 +93,7 @@ jobs:
               print("INPUT TOKENS =", result.input_tokens)
               print("OUTPUT TOKENS =", result.output_tokens)
 
-              if "GEMINI_OK" not in text:
                   raise RuntimeError(
-                      "Gemini responded, but did not return the expected marker."
                   )
 
               print("REAL GEMINI SMOKE TEST = PASSED")

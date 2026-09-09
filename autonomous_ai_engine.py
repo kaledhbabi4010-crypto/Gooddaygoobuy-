@@ -3369,7 +3369,7 @@ class LocalTestLLMProvider:
 class QwenProviderAdapter:
     name = 'qwen'
 
-    def __init__(self, endpoint=None, api_key=None, model='Qwen/Qwen3-235B-A22B-Thinking-2507'):
+    def __init__(self, endpoint=None, api_key=None, model='openrouter/qwen/qwen3-235b-a22b-thinking-2507'):
         self.endpoint = endpoint
         self.api_key = api_key
         self.model = model

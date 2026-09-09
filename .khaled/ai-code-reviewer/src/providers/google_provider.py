@@ -35,6 +35,7 @@ class GoogleProvider(LLMProvider):
         temperature: float = 0.1,
         max_tokens: int = 4096,
         json_mode: bool = False,
+        reasoning_effort: str | None = None,
     ) -> LLMResponse:
         kwargs: dict = {
             "model": self._model,
@@ -44,6 +45,9 @@ class GoogleProvider(LLMProvider):
         }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
 
         resp = await self._client.chat.completions.create(**kwargs)
 

@@ -1,0 +1,405 @@
+name: GQS - Gemini Real Android AI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/gemini-real-android.yml"
+
+permissions:
+  contents: read
+
+env:
+  FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+  GEMINI_MODEL: gemini-3.8-flash
+
+jobs:
+
+  real-android-ai:
+    name: Build → Real Android Device → Gemini Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+
+      # ------------------------------------------------------------
+      # 1. Source
+      # ------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------
+      # 2. Validate required secrets/config
+      # ------------------------------------------------------------
+      - name: Validate configuration
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -e
+
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "ERROR: GEMINI_API_KEY is missing."
+            exit 10
+          fi
+
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "ERROR: FIREBASE_SERVICE_ACCOUNT is missing."
+            exit 11
+          fi
+
+          if [ -z "$FIREBASE_PROJECT_ID" ]; then
+            echo "ERROR: Repository variable FIREBASE_PROJECT_ID is missing."
+            exit 12
+          fi
+
+          echo "Gemini secret: PRESENT"
+          echo "Firebase credential: PRESENT"
+          echo "Firebase project: $FIREBASE_PROJECT_ID"
+
+      # ------------------------------------------------------------
+      # 3. Java
+      # ------------------------------------------------------------
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # ------------------------------------------------------------
+      # 4. Android SDK
+      # ------------------------------------------------------------
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ------------------------------------------------------------
+      # 5. Build BOTH existing Android applications
+      # ------------------------------------------------------------
+      - name: Build Android applications
+        run: |
+          set -e
+
+          BUILT=0
+
+          if [ -f "android_app/gradlew" ]; then
+            echo "Building android_app..."
+            cd android_app
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon --stacktrace
+            cd ..
+            BUILT=1
+          fi
+
+          if [ -f "khaled_android/gradlew" ]; then
+            echo "Building khaled_android..."
+            cd khaled_android
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon --stacktrace
+            cd ..
+            BUILT=1
+          fi
+
+          if [ "$BUILT" = "0" ]; then
+            echo "ERROR: No supported Android Gradle project found."
+            exit 20
+          fi
+
+          mkdir -p gqs-test-apks
+
+          find android_app khaled_android \
+            -type f \
+            -path "*/build/outputs/apk/debug/*.apk" \
+            -exec cp {} gqs-test-apks/ \; 2>/dev/null || true
+
+          ls -lh gqs-test-apks
+
+          if ! ls gqs-test-apks/*.apk >/dev/null 2>&1; then
+            echo "ERROR: No debug APK produced."
+            exit 21
+          fi
+
+      # ------------------------------------------------------------
+      # 6. Google authentication
+      # ------------------------------------------------------------
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          project_id: '${{ vars.FIREBASE_PROJECT_ID }}'
+
+      # ------------------------------------------------------------
+      # 7. Google Cloud SDK
+      # ------------------------------------------------------------
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: '${{ vars.FIREBASE_PROJECT_ID }}'
+
+      # ------------------------------------------------------------
+      # 8. Enable Firebase Test Lab API if permitted
+      # ------------------------------------------------------------
+      - name: Prepare Firebase Test Lab
+        run: |
+          set -e
+
+          gcloud config set project "$FIREBASE_PROJECT_ID"
+
+          gcloud services enable testing.googleapis.com \
+            --project="$FIREBASE_PROJECT_ID" || true
+
+          echo "Available physical Android devices:"
+          gcloud firebase test android models list \
+            --format="table(modelId,form,formFactor,name,osVersionId)" \
+            --filter="form=PHYSICAL" \
+            --limit=30 || true
+
+      # ------------------------------------------------------------
+      # 9. Select first available PHYSICAL device dynamically
+      # ------------------------------------------------------------
+      - name: Select real Android device
+        id: device
+        run: |
+          set -e
+
+          DEVICE_JSON="$(
+            gcloud firebase test android models list \
+              --format=json \
+              --filter="form=PHYSICAL"
+          )"
+
+          echo "$DEVICE_JSON" > physical-devices.json
+
+          python3 - <<'PY'
+          import json
+
+          with open("physical-devices.json", "r") as f:
+              data = json.load(f)
+
+          candidates = []
+
+          for x in data:
+              model = x.get("id") or x.get("modelId")
+              versions = x.get("supportedVersionIds") or x.get("versionIds") or []
+
+              if model and versions:
+                  candidates.append((model, versions[-1]))
+
+          if not candidates:
+              raise SystemExit(
+                  "ERROR: No physical Android device was returned by Firebase Test Lab."
+              )
+
+          model, version = candidates[0]
+
+          print("Selected physical model:", model)
+          print("Selected Android version:", version)
+
+          with open(
+              __import__("os").environ["GITHUB_OUTPUT"], "a"
+          ) as f:
+              f.write(f"model={model}\n")
+              f.write(f"version={version}\n")
+          PY
+
+      # ------------------------------------------------------------
+      # 10. Choose APK
+      # ------------------------------------------------------------
+      - name: Select APK
+        id: apk
+        run: |
+          set -e
+
+          APK="$(find gqs-test-apks -type f -name '*.apk' | head -n 1)"
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK not found."
+            exit 30
+          fi
+
+          echo "Testing APK: $APK"
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------
+      # 11. REAL PHYSICAL DEVICE ROBO TEST
+      # ------------------------------------------------------------
+      - name: Run real Android physical-device Robo test
+        id: test
+        continue-on-error: true
+        run: |
+          set -o pipefail
+
+          mkdir -p test-results
+
+          echo "=================================================="
+          echo "REAL ANDROID DEVICE TEST"
+          echo "Model: ${{ steps.device.outputs.model }}"
+          echo "Android: ${{ steps.device.outputs.version }}"
+          echo "=================================================="
+
+          gcloud firebase test android run \
+            --type robo \
+            --app "${{ steps.apk.outputs.path }}" \
+            --device model="${{ steps.device.outputs.model }}",version="${{ steps.device.outputs.version }}",locale=en,orientation=portrait \
+            --timeout 5m \
+            --client-details matrixLabel="GQS-Gemini-Real-Android" \
+            --results-dir="gqs-real-android" \
+            2>&1 | tee test-results/firebase-test.log
+
+          TEST_EXIT=${PIPESTATUS[0]}
+
+          echo "TEST_EXIT=$TEST_EXIT" > test-results/test-exit.txt
+
+          exit "$TEST_EXIT"
+
+      # ------------------------------------------------------------
+      # 12. Gemini receives ONLY test/build evidence
+      # ------------------------------------------------------------
+      - name: Prepare Gemini evidence
+        if: always()
+        run: |
+          mkdir -p gemini-evidence
+
+          {
+            echo "GQS REAL ANDROID TEST REPORT"
+            echo "================================"
+            echo
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Commit: $GITHUB_SHA"
+            echo
+            echo "Physical device:"
+            echo "${{ steps.device.outputs.model }}"
+            echo
+            echo "Android version:"
+            echo "${{ steps.device.outputs.version }}"
+            echo
+            echo "Test result:"
+            cat test-results/test-exit.txt 2>/dev/null || true
+            echo
+            echo "Firebase output:"
+            cat test-results/firebase-test.log 2>/dev/null || true
+          } > gemini-evidence/report.txt
+
+          # Prevent enormous prompts
+          tail -c 30000 gemini-evidence/report.txt \
+            > gemini-evidence/report-limited.txt
+
+      # ------------------------------------------------------------
+      # 13. Gemini AI diagnosis
+      # ------------------------------------------------------------
+      - name: Gemini AI diagnosis
+        if: always()
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -e
+
+          python3 -m pip install --quiet --upgrade google-genai
+
+          python3 - <<'PY'
+          import os
+          from google import genai
+
+          key = os.environ.get("GEMINI_API_KEY")
+
+          if not key:
+              raise SystemExit("GEMINI_API_KEY missing.")
+
+          client = genai.Client(api_key=key)
+
+          with open(
+              "gemini-evidence/report-limited.txt",
+              "r",
+              errors="replace"
+          ) as f:
+              evidence = f.read()
+
+          prompt = f"""
+          You are the GQS Android diagnostic AI.
+
+          IMPORTANT RULES:
+          1. Never invent test results.
+          2. Use only the evidence supplied below.
+          3. Clearly separate CONFIRMED facts from POSSIBLE causes.
+          4. The test was intended for a REAL PHYSICAL Android device.
+          5. Do not claim success unless the Firebase test evidence confirms it.
+          6. Do not expose secrets or API keys.
+          7. Do not request or print credentials.
+          8. Do not modify application source code.
+          9. Produce an actionable diagnosis for the workflow.
+
+          Return:
+          - TEST_STATUS
+          - CONFIRMED_FINDINGS
+          - LIKELY_ROOT_CAUSE
+          - REQUIRED_NEXT_ACTIONS
+          - WHETHER_RETEST_IS_REQUIRED
+
+          EVIDENCE:
+          {evidence}
+          """
+
+          response = client.models.generate_content(
+              model=os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"),
+              contents=prompt
+          )
+
+          text = response.text or "Gemini returned no text."
+
+          with open("gemini-evidence/gemini-diagnosis.txt", "w") as f:
+              f.write(text)
+
+          print(text)
+          PY
+
+      # ------------------------------------------------------------
+      # 14. Final machine-readable report
+      # ------------------------------------------------------------
+      - name: Generate final report
+        if: always()
+        run: |
+          {
+            echo "# GQS REAL ANDROID AI TEST"
+            echo
+            echo "## Physical device"
+            echo "- Model: ${{ steps.device.outputs.model }}"
+            echo "- Android: ${{ steps.device.outputs.version }}"
+            echo
+            echo "## Test"
+            cat test-results/test-exit.txt 2>/dev/null || true
+            echo
+            echo "## Gemini diagnosis"
+            cat gemini-evidence/gemini-diagnosis.txt 2>/dev/null || true
+            echo
+            echo "## Important"
+            echo "The result is considered real only when Firebase Test Lab confirms execution on the physical device."
+          } > GQS-REAL-ANDROID-REPORT.md
+
+      # ------------------------------------------------------------
+      # 15. Upload all evidence
+      # ------------------------------------------------------------
+      - name: Upload complete evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GQS-real-android-ai-report
+          path: |
+            GQS-REAL-ANDROID-REPORT.md
+            test-results/
+            gemini-evidence/
+            gqs-real-android/
+            physical-devices.json
+          if-no-files-found: warn
+
+      # ------------------------------------------------------------
+      # 16. Fail workflow if REAL DEVICE test failed
+      # ------------------------------------------------------------
+      - name: Enforce real-device result
+        if: always()
+        run: |
+          if [ "${{ steps.test.outcome }}" != "success" ]; then
+            echo "REAL ANDROID TEST FAILED."
+            echo "See GQS-real-android-ai-report artifact."
+            exit 40
+          fi
+
+          echo "REAL ANDROID TEST PASSED."

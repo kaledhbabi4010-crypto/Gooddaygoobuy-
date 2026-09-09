@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -87,6 +89,7 @@ jobs:
           done
 
       - name: Run real Android emulator tests
+        timeout-minutes: 15
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -109,7 +112,25 @@ jobs:
             "$ADB" shell getprop ro.build.version.release
             "$ADB" shell getprop ro.build.version.sdk
 
-            test "$("$ADB" shell getprop sys.boot_completed" | tr -d '\r')" = "1"
+            echo "WAITING FOR ANDROID BOOT..."
+
+            BOOT_OK=0
+            for i in $(seq 1 60); do
+              BOOT=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+              if [ "$BOOT" = "1" ]; then
+                BOOT_OK=1
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "$BOOT_OK" != "1" ]; then
+              echo "ANDROID EMULATOR BOOT: FAIL"
+              "$ADB" shell getprop || true
+              exit 1
+            fi
+
+            echo "ANDROID EMULATOR BOOT: PASS"
 
             for ITEM in android_app khaled_android
             do

@@ -1,0 +1,366 @@
+name: KHALED Autonomous Real Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_rounds:
+        description: "Maximum repair rounds"
+        required: false
+        default: "12"
+      test_mode:
+        description: "Android test mode"
+        required: false
+        default: "real"
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: khaled-autonomous-repair
+  cancel-in-progress: false
+
+jobs:
+  controller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "KHALED Autonomous Repair"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Detect project
+        id: detect
+        shell: bash
+        run: |
+          set -u
+
+          echo "===== PROJECT DETECTION ====="
+
+          GRADLE=""
+
+          if [ -f "./gradlew" ]; then
+            GRADLE="./gradlew"
+          elif [ -f "./app/gradlew" ]; then
+            GRADLE="./app/gradlew"
+          else
+            GRADLE=$(find . -maxdepth 4 -type f -name gradlew | head -1 || true)
+          fi
+
+          if [ -n "$GRADLE" ]; then
+            echo "GRADLE=$GRADLE" >> "$GITHUB_OUTPUT"
+            echo "GRADLE_FOUND=true" >> "$GITHUB_OUTPUT"
+            echo "Found: $GRADLE"
+          else
+            echo "GRADLE_FOUND=false" >> "$GITHUB_OUTPUT"
+            echo "NO_GRADLE_WRAPPER_FOUND"
+          fi
+
+          echo "===== ANDROID PROJECTS ====="
+          find . -name settings.gradle -o -name settings.gradle.kts | sort || true
+
+          echo "===== MANIFESTS ====="
+          find . -name AndroidManifest.xml | sort || true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Setup Android
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android components
+        shell: bash
+        run: |
+          set +e
+
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "emulator" || true
+
+      # ---------------------------------------------------------
+      # Create a disposable repair branch.
+      # ---------------------------------------------------------
+
+      - name: Create repair branch
+        id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -e
+
+          BRANCH="khaled-autorepair-${GITHUB_RUN_ID}"
+
+          git checkout -b "$BRANCH"
+
+          git push origin "$BRANCH"
+
+          echo "BRANCH=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.branch.outputs.BRANCH }}
+        shell: bash
+        run: |
+          set -e
+
+          PR_URL=$(gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --head "$BRANCH" \
+            --base "${GITHUB_REF_NAME}" \
+            --title "KHALED Autonomous Repair ${GITHUB_RUN_ID}" \
+            --body "KHALED autonomous repair branch. AI fixes are applied only to this PR branch. Real build/test evidence is required before success.")
+
+          echo "PR_URL=$PR_URL" >> "$GITHUB_OUTPUT"
+
+          PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq .number)
+
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+          echo "PR=$PR_NUMBER"
+
+      # ---------------------------------------------------------
+      # The real repair loop.
+      #
+      # GitHub itself limits runner execution.
+      # We therefore use a bounded loop instead of pretending
+      # infinite execution is possible.
+      # ---------------------------------------------------------
+
+      - name: Autonomous Build Test Repair Loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.PR_NUMBER }}
+          MAX_ROUNDS: ${{ inputs.max_rounds }}
+          GRADLE_FOUND: ${{ steps.detect.outputs.GRADLE_FOUND }}
+          GRADLE: ${{ steps.detect.outputs.GRADLE }}
+        shell: bash
+        run: |
+          set +e
+
+          echo "=================================================="
+          echo "KHALED REAL REPAIR LOOP"
+          echo "MAX_ROUNDS=$MAX_ROUNDS"
+          echo "PR=$PR_NUMBER"
+          echo "=================================================="
+
+          ROUND=1
+
+          while [ "$ROUND" -le "$MAX_ROUNDS" ]; do
+
+            echo ""
+            echo "=================================================="
+            echo "ROUND $ROUND / $MAX_ROUNDS"
+            echo "=================================================="
+
+            git fetch origin
+            git reset --hard "origin/${GITHUB_REF_NAME}"
+
+            CURRENT_SHA=$(git rev-parse HEAD)
+
+            echo "CURRENT_SHA=$CURRENT_SHA"
+
+            # ---------------------------------------------------
+            # REAL BUILD
+            # ---------------------------------------------------
+
+            BUILD_LOG="khaled_build_round_${ROUND}.log"
+
+            BUILD_EXIT=1
+
+            if [ "$GRADLE_FOUND" = "true" ]; then
+
+              chmod +x "$GRADLE"
+
+              echo "Running real Gradle build..."
+
+              "$GRADLE" \
+                assembleDebug \
+                --stacktrace \
+                --no-daemon \
+                2>&1 | tee "$BUILD_LOG"
+
+              BUILD_EXIT=${PIPESTATUS[0]}
+
+            else
+
+              echo "NO_GRADLE_WRAPPER_FOUND" | tee "$BUILD_LOG"
+              BUILD_EXIT=2
+
+            fi
+
+            # ---------------------------------------------------
+            # APK EVIDENCE
+            # ---------------------------------------------------
+
+            APK_COUNT=$(find . -type f -name "*.apk" | wc -l)
+
+            echo "APK_COUNT=$APK_COUNT"
+
+            # ---------------------------------------------------
+            # REAL TEST DECISION
+            # ---------------------------------------------------
+
+            if [ "$BUILD_EXIT" -eq 0 ] && [ "$APK_COUNT" -gt 0 ]; then
+
+              echo "=================================================="
+              echo "BUILD SUCCESS EVIDENCE VERIFIED"
+              echo "=================================================="
+
+              find . -type f -name "*.apk" -print
+
+              echo "KHALED_STATUS=VERIFIED_SUCCESS" > khaled_result.txt
+              echo "ROUND=$ROUND" >> khaled_result.txt
+              echo "BUILD_EXIT=$BUILD_EXIT" >> khaled_result.txt
+              echo "APK_COUNT=$APK_COUNT" >> khaled_result.txt
+
+              git add khaled_result.txt
+              git commit -m "KHALED: verified successful build" || true
+              git push origin HEAD || true
+
+              exit 0
+            fi
+
+            echo "=================================================="
+            echo "BUILD FAILED"
+            echo "AI REPAIR REQUIRED"
+            echo "=================================================="
+
+            # ---------------------------------------------------
+            # Put the REAL build failure into the PR.
+            # This gives the reviewer actual evidence.
+            # ---------------------------------------------------
+
+            {
+              echo "## KHALED REAL BUILD FAILURE"
+              echo ""
+              echo "**Round:** $ROUND"
+              echo "**Commit:** $CURRENT_SHA"
+              echo "**Build exit:** $BUILD_EXIT"
+              echo "**APK count:** $APK_COUNT"
+              echo ""
+              echo '```text'
+              tail -300 "$BUILD_LOG"
+              echo '```'
+            } > khaled_failure.md
+
+            gh pr comment "$PR_NUMBER" \
+              --body-file khaled_failure.md
+
+            # ---------------------------------------------------
+            # Ask AI Code Reviewer to review current PR.
+            # ---------------------------------------------------
+
+            gh pr comment "$PR_NUMBER" \
+              --body "/review"
+
+            echo "Waiting for AI review..."
+
+            sleep 30
+
+            # ---------------------------------------------------
+            # Ask the actual AI Code Reviewer /fix command.
+            # ---------------------------------------------------
+
+            gh pr comment "$PR_NUMBER" \
+              --body "/fix"
+
+            echo "AI FIX REQUESTED."
+
+            # ---------------------------------------------------
+            # Wait for an actual new commit.
+            # No commit = no claim of repair.
+            # ---------------------------------------------------
+
+            OLD_SHA="$CURRENT_SHA"
+
+            FIXED=false
+
+            for WAIT in $(seq 1 30); do
+
+              sleep 20
+
+              NEW_SHA=$(gh pr view "$PR_NUMBER" \
+                --json headRefOid \
+                --jq .headRefOid)
+
+              echo "Check $WAIT: $NEW_SHA"
+
+              if [ -n "$NEW_SHA" ] && [ "$NEW_SHA" != "$OLD_SHA" ]; then
+                FIXED=true
+                echo "REAL NEW COMMIT DETECTED: $NEW_SHA"
+                break
+              fi
+
+            done
+
+            if [ "$FIXED" != "true" ]; then
+
+              echo "=================================================="
+              echo "NO AI FIX COMMIT DETECTED"
+              echo "STOPPING — NO FABRICATED SUCCESS"
+              echo "=================================================="
+
+              {
+                echo "KHALED_STATUS=STOPPED_NO_FIX"
+                echo "ROUND=$ROUND"
+                echo "OLD_SHA=$OLD_SHA"
+              } > khaled_result.txt
+
+              exit 1
+            fi
+
+            # ---------------------------------------------------
+            # New AI commit detected.
+            # Pull it and repeat REAL BUILD.
+            # ---------------------------------------------------
+
+            git fetch origin
+            git reset --hard "origin/${GITHUB_REF_NAME}"
+
+            ROUND=$((ROUND + 1))
+
+          done
+
+          echo "=================================================="
+          echo "MAXIMUM REPAIR ROUNDS REACHED"
+          echo "=================================================="
+
+          {
+            echo "KHALED_STATUS=MAX_ROUNDS_REACHED"
+            echo "MAX_ROUNDS=$MAX_ROUNDS"
+          } > khaled_result.txt
+
+          exit 1
+
+      - name: Upload truth evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khaled-real-repair-evidence-${{ github.run_id }}
+          path: |
+            khaled_*.log
+            khaled_*.md
+            khaled_result.txt
+            **/*.apk
+          if-no-files-found: warn

@@ -93,8 +93,6 @@ jobs:
               print("INPUT TOKENS =", result.input_tokens)
               print("OUTPUT TOKENS =", result.output_tokens)
 
-                  raise RuntimeError(
-                  )
 
               if not text or not text.strip():
                   raise RuntimeError("Gemini API returned an empty response.")

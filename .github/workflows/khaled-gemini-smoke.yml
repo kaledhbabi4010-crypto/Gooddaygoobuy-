@@ -96,7 +96,12 @@ jobs:
                   raise RuntimeError(
                   )
 
+              if not text or not text.strip():
+                  raise RuntimeError("Gemini API returned an empty response.")
+
+              print("REAL GEMINI RESPONSE = NON_EMPTY")
               print("REAL GEMINI SMOKE TEST = PASSED")
+
 
           asyncio.run(main())
           PY

@@ -147,72 +147,80 @@ def protected_patch(patch):
     return True
 
 
-async def ask_gemini(build_log):
-    key = os.environ.get("GOOGLE_API_KEY", "")
+async def ask_gemini(build_log, failure_kind):
+    import hashlib
+
+    key = os.environ.get("GOOGLE_API_KEY", "").strip()
 
     if not key:
-        raise RuntimeError("GOOGLE_API_KEY missing")
+        print("GEMINI_RESPONSE = False")
+        print("GEMINI_ERROR = GOOGLE_API_KEY_MISSING")
+        return ""
 
-    model = os.environ.get(
-        "GEMINI_MODEL",
-        "gemini-3.6-flash"
-    )
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
-    provider_class = load_google_provider()
+    try:
+        provider_class = load_google_provider()
+        provider = provider_class(
+            api_key=key,
+            model=model
+        )
 
-    provider = provider_class(
-        api_key=key,
-        model=model
-    )
+        system = """You are the KHALED autonomous repair engine.
 
-    prompt = """
-You are KHALED SELF-MAINTENANCE ENGINE.
-
-A REAL build failed.
-
-Return ONLY a minimal unified git diff.
+Return ONLY a valid unified git diff.
 
 Rules:
-- Fix only the demonstrated build failure.
-- Change the smallest possible number of lines.
-- Do not modify .github/
-- Do not modify .khaled/
-- Do not modify gradle/wrapper/
-- Do not rewrite whole files.
-- Do not invent test results.
-- Do not explain anything.
-- No Markdown fences.
-- If no safe repair exists, return exactly:
-NO_SAFE_PATCH
+1. Repair only the actual build failure shown in the evidence.
+2. Make the smallest safe change possible.
+3. Never modify .github/, .khaled/, .git/, gradle/wrapper/, gradlew, or gradlew.bat.
+4. Never invent test results.
+5. Never return explanations.
+6. The diff must contain valid --- / +++ headers and @@ hunks.
+7. If no safe repair can be produced, return exactly NO_SAFE_PATCH.
+"""
 
-REAL BUILD LOG:
-""" + build_log[-MAX_LOG:]
+        user = (
+            "FAILURE_KIND:\n"
+            + str(failure_kind)
+            + "\n\n"
+            "REAL_BUILD_EVIDENCE:\n"
+            + str(build_log)
+        )
 
-    result = await provider.complete(
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Return only a valid minimal unified git diff."
-                )
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        temperature=0,
-        max_tokens=8000,
-        json_mode=False
-    )
+        result = provider.complete(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ],
+            temperature=0,
+            max_tokens=8000,
+            json_mode=False
+        )
 
-    response = (result.content or "").strip()
+        content = getattr(result, "content", None)
 
-    print("GEMINI_RESPONSE =", bool(response))
-    print("GEMINI_RESPONSE_LENGTH =", len(response))
+        if content is None:
+            content = str(result)
 
-    return response[:MAX_RESPONSE]
+        content = str(content).strip()
 
+        print("GEMINI_RESPONSE =", bool(content))
+        print("GEMINI_RESPONSE_LENGTH =", len(content))
+        print(
+            "GEMINI_RESPONSE_SHA256 =",
+            hashlib.sha256(
+                content.encode("utf-8", errors="replace")
+            ).hexdigest()
+        )
+
+        return content
+
+    except Exception as exc:
+        print("GEMINI_RESPONSE = False")
+        print("GEMINI_ERROR_TYPE =", type(exc).__name__)
+        print("GEMINI_ERROR =", str(exc)[:500])
+        return ""
 
 def repair(build_log):
     print("KHALED_REPAIR_START=true")

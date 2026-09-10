@@ -75,20 +75,25 @@ def extract_patch(response):
     if not response:
         return ""
 
-    text = response.strip()
+    text = str(response).strip()
 
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
+    # Remove markdown fences without trusting surrounding prose.
+    lines = text.splitlines()
 
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+
+    text = "\n".join(lines).strip()
+
+    # Prefer a complete git diff.
     start = text.find("diff --git ")
     if start >= 0:
         patch = text[start:].strip()
     else:
+        # Fallback to unified diff headers.
         start = text.find("--- ")
         if start < 0:
             return ""
@@ -96,31 +101,70 @@ def extract_patch(response):
 
     lines = patch.splitlines()
 
-    # Unified diff must contain both file headers.
-    if not any(line.startswith("--- ") for line in lines):
+    # Mandatory unified-diff headers.
+    old_headers = [
+        line for line in lines
+        if line.startswith("--- ")
+    ]
+
+    new_headers = [
+        line for line in lines
+        if line.startswith("+++ ")
+    ]
+
+    if not old_headers or not new_headers:
         return ""
 
-    if not any(line.startswith("+++ ") for line in lines):
-        return ""
-
-    # A real patch must contain at least one hunk or a valid binary diff.
+    # A normal text patch must contain at least one hunk.
     has_hunk = any(line.startswith("@@ ") for line in lines)
-    has_binary = any(line.startswith("Binary files ") for line in lines)
+
+    # Binary patches are allowed only when explicitly represented.
+    has_binary = any(
+        line.startswith("Binary files ")
+        for line in lines
+    )
 
     if not has_hunk and not has_binary:
         return ""
 
-    # Reject obvious prose accidentally returned by the model.
+    # Reject obvious natural-language contamination.
     bad_prefixes = (
         "Here is",
-        "Sure,",
+        "Here’s",
+        "Sure",
         "The fix",
         "Explanation:",
-        "```"
+        "I fixed",
+        "I have fixed",
+        "```",
     )
 
     for line in lines:
-        if line.strip().startswith(bad_prefixes):
+        stripped = line.strip()
+        if stripped.startswith(bad_prefixes):
+            return ""
+
+    # A normal text unified diff should have at least one
+    # addition/deletion/context line after a hunk.
+    if has_hunk:
+        hunk_index = next(
+            i for i, line in enumerate(lines)
+            if line.startswith("@@ ")
+        )
+
+        hunk_lines = lines[hunk_index + 1:]
+
+        meaningful = [
+            line for line in hunk_lines
+            if (
+                line.startswith("+")
+                or line.startswith("-")
+                or line.startswith(" ")
+                or line.startswith("\\")
+            )
+        ]
+
+        if not meaningful:
             return ""
 
     return patch + "\n"
@@ -226,7 +270,7 @@ def repair(build_log):
     print("KHALED_REPAIR_START=true")
 
     response = asyncio.run(
-        ask_gemini(build_log)
+        ask_gemini(build_log, failure_kind)
     )
 
     patch = extract_patch(response)

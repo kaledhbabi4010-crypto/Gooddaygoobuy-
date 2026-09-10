@@ -30,17 +30,24 @@ def run(cmd):
 
 
 def get_build_command():
-    code, output = run(
-        ["./gradlew", "tasks", "--all", "--no-daemon"]
-    )
+    """Return the real Gradle command for both Android projects."""
+    projects = ["android_app", "khaled_android"]
 
-    if code == 0 and re.search(
-        r"(^|\s)assembleDebug(\s|$)", output
-    ):
-        return ["./gradlew", "assembleDebug", "--no-daemon"]
+    for project in projects:
+        wrapper = ROOT / project / "gradlew"
+        if not wrapper.exists():
+            raise FileNotFoundError(
+                f"REAL_GRADLE_WRAPPER_MISSING: {wrapper}"
+            )
+        wrapper.chmod(0o755)
 
-    return ["./gradlew", "assemble", "--no-daemon"]
-
+    return [
+        "bash",
+        "-lc",
+        "set -o pipefail; "
+        "cd android_app && ./gradlew --no-daemon assembleDebug "
+        "&& cd ../khaled_android && ./gradlew --no-daemon assembleDebug"
+    ]
 
 def protected_patch(patch):
     for line in patch.splitlines():

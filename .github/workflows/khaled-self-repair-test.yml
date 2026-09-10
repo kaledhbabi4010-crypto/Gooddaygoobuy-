@@ -1,0 +1,107 @@
+name: KHALED Self Repair Engine Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  self-repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install minimal engine dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -q openai PyYAML
+
+      - name: Verify engine
+        run: |
+          python -m py_compile .khaled/runtime/khaled_repair_engine.py
+
+      - name: Real build
+        id: build
+        shell: bash
+        run: |
+          set +e
+          cd android_app
+          ./gradlew test assembleDebug --no-daemon --stacktrace 2>&1 | tee ../build.log
+          CODE=${PIPESTATUS[0]}
+          cd ..
+          echo "BUILD_EXIT=$CODE"
+          exit $CODE
+
+      - name: Gemini self repair
+        if: failure() && steps.build.outcome == 'failure'
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.6-flash
+        run: |
+          python .khaled/runtime/khaled_repair_engine.py \
+            --failure-kind build \
+            --build-log build.log
+
+      - name: Verify repaired build
+        if: always()
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "PATCH_CHANGED_FILES=false"
+            echo "No repair patch was applied."
+            exit 1
+          fi
+
+          echo "PATCH_CHANGED_FILES=true"
+          git diff --stat
+
+          set +e
+          cd android_app
+          ./gradlew test assembleDebug --no-daemon --stacktrace 2>&1 | tee ../rebuild.log
+          CODE=${PIPESTATUS[0]}
+          cd ..
+
+          echo "REBUILD_EXIT=$CODE"
+
+          if [ "$CODE" -ne 0 ]; then
+            echo "REAL_REPAIR_RESULT=FAILED"
+            exit "$CODE"
+          fi
+
+          echo "REAL_REPAIR_RESULT=SUCCESS"
+
+      - name: Evidence
+        if: always()
+        run: |
+          echo "========================================"
+          echo "KHALED REAL SELF-REPAIR EVIDENCE"
+          echo "========================================"
+
+          if [ -f build.log ]; then
+            echo "BUILD_LOG_PRESENT=true"
+            echo "BUILD_LOG_BYTES=$(wc -c < build.log)"
+          fi
+
+          if [ -f rebuild.log ]; then
+            echo "REBUILD_LOG_PRESENT=true"
+            echo "REBUILD_LOG_BYTES=$(wc -c < rebuild.log)"
+          fi
+
+          echo "GIT_DIFF:"
+          git diff --stat || true
+
+          echo "========================================"

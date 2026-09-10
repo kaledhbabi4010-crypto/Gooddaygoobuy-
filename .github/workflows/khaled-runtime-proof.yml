@@ -62,6 +62,32 @@ jobs:
           test -e /dev/kvm
           echo "KVM_READY=true"
 
+      # KHALED_RUNTIME_LOOP_V2
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install KHALED AI runtime
+        shell: bash
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          python -m pip install -e .khaled/ai-code-reviewer
+          python -m py_compile .khaled/runtime/khaled_repair_engine.py
+          echo "KHALED_AI_RUNTIME_READY=true"
+
+      - name: Verify Gemini secret
+        shell: bash
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.6-flash
+        run: |
+          set -e
+          test -n "${GOOGLE_API_KEY:-}"
+          echo "GEMINI_SECRET_INJECTED=true"
+          echo "GEMINI_MODEL=${GEMINI_MODEL}"
+
       - name: Create runtime verification script
         working-directory: android_app
         shell: bash
@@ -69,6 +95,32 @@ jobs:
           cat > runtime-proof.sh <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
+
+          EVIDENCE_FILE="${RUNNER_TEMP}/khaled-runtime-evidence.txt"
+          OUTPUT_FILE="runtime-proof-output.txt"
+          LOGCAT_FILE="runtime-logcat.txt"
+
+          exec > "$OUTPUT_FILE" 2>&1
+
+          trap '
+            status=$?
+            {
+              echo "KHALED_RUNTIME_EVIDENCE_V1=true"
+              echo "EXIT_STATUS=$status"
+              echo "WORKSPACE=$(pwd)"
+              echo "PACKAGE=com.quickservice.giant"
+              echo "=== REAL RUNTIME SCRIPT OUTPUT ==="
+              if [ -f "$OUTPUT_FILE" ]; then
+                cat "$OUTPUT_FILE"
+              fi
+              echo "=== REAL LOGCAT ==="
+              if [ -f "$LOGCAT_FILE" ]; then
+                cat "$LOGCAT_FILE"
+              fi
+              echo "=== END REAL RUNTIME EVIDENCE ==="
+            } > "$EVIDENCE_FILE"
+            exit "$status"
+          ' EXIT
 
           echo "=== DEVICE ==="
           adb devices
@@ -138,6 +190,8 @@ jobs:
           chmod +x runtime-proof.sh
 
       - name: Android emulator — install, launch and runtime proof
+        id: runtime1
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -157,6 +211,44 @@ jobs:
             -camera-front none
           working-directory: android_app
           script: bash runtime-proof.sh
+
+      - name: Runtime failure — Gemini repair
+        id: repair1
+        if: ${{ steps.runtime1.outcome == 'failure' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.6-flash
+        run: |
+          set -e
+          EVIDENCE="${RUNNER_TEMP}/khaled-runtime-evidence.txt"
+          if [ ! -s "$EVIDENCE" ]; then
+            echo "REAL_RUNTIME_EVIDENCE=MISSING"
+            exit 1
+          fi
+          echo "REAL_RUNTIME_EVIDENCE=PRESENT"
+          PYTHONPATH="$GITHUB_WORKSPACE/.khaled/ai-code-reviewer" \
+          python .khaled/runtime/khaled_repair_engine.py \
+            --failure-kind runtime \
+            --evidence-file "$EVIDENCE"
+          echo "RUNTIME_GEMINI_REPAIR=EXECUTED"
+
+      - name: Runtime failure — rebuild after repair
+        id: rebuild1
+        if: ${{ steps.repair1.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -e
+          cd android_app
+          ./gradlew test assembleDebug --no-daemon --stacktrace
+          cd ../khaled_android
+          ./gradlew test assembleDebug --no-daemon --stacktrace
+          echo "RUNTIME_REBUILD_SUCCESS=true"
+
+
+
       - name: Upload runtime evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -166,18 +258,110 @@ jobs:
             android_app/app/build/reports/
             android_app/app/build/outputs/apk/debug/*.apk
             android_app/runtime-logcat.txt
+            ${{ runner.temp }}/khaled-runtime-evidence.txt
           if-no-files-found: ignore
 
-      - name: FINAL TRUTH GATE
-        if: success()
+
+      - name: Round 2 — Android emulator runtime proof
+        if: ${{ steps.rebuild1.outcome == 'success' }}
+        id: runtime2
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          avd-name: khaled-test
+          force-avd-creation: false
+          emulator-boot-timeout: 600
+          disable-animations: true
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -noaudio
+            -no-boot-anim
+            -camera-back none
+            -camera-front none
+          working-directory: android_app
+          script: bash runtime-proof.sh
+      - name: Runtime failure — Gemini repair round 2
+        id: repair2
+        if: ${{ steps.runtime2.outcome == 'failure' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.6-flash
         run: |
-          echo "========================================"
-          echo "FINAL_REAL_RUNTIME_SUCCESS=true"
-          echo "BUILD=true"
-          echo "UNIT_TEST=true"
-          echo "EMULATOR=true"
-          echo "APK_INSTALL=true"
-          echo "APP_LAUNCH=true"
-          echo "RUNTIME_PROCESS=true"
-          echo "CRASH_SCAN=true"
-          echo "========================================"
+          set -e
+          EVIDENCE="${RUNNER_TEMP}/khaled-runtime-evidence.txt"
+          if [ ! -s "$EVIDENCE" ]; then
+            echo "REAL_RUNTIME_EVIDENCE=MISSING"
+            exit 1
+          fi
+          echo "REAL_RUNTIME_EVIDENCE=PRESENT"
+          echo "CALLING_REAL_GEMINI_RUNTIME=TRUE"
+          PYTHONPATH="$GITHUB_WORKSPACE/.khaled/ai-code-reviewer" \
+          python .khaled/runtime/khaled_repair_engine.py \
+            --failure-kind runtime \
+            --evidence-file "$EVIDENCE"
+          echo "RUNTIME_GEMINI_REPAIR_ROUND_2=EXECUTED"
+      - name: Runtime failure — rebuild after repair round 2
+        id: rebuild2
+        if: ${{ steps.repair2.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -e
+          cd android_app
+          ./gradlew test assembleDebug --no-daemon --stacktrace
+          cd ../khaled_android
+          ./gradlew test assembleDebug --no-daemon --stacktrace
+          echo "RUNTIME_REBUILD_ROUND_2_SUCCESS=true"
+      - name: Round 3 — Android emulator runtime proof
+        id: runtime3
+        if: ${{ steps.rebuild2.outcome == 'success' }}
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          avd-name: khaled-test
+          force-avd-creation: false
+          emulator-boot-timeout: 600
+          disable-animations: true
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -noaudio
+            -no-boot-anim
+            -camera-back none
+            -camera-front none
+          working-directory: android_app
+          script: bash runtime-proof.sh
+
+# KHALED_RUNTIME_LOOP_V3
+      - name: FINAL REAL RUNTIME TRUTH GATE
+        if: always()
+        shell: bash
+        run: |
+          set -e
+          echo "RUNTIME1_OUTCOME=${{ steps.runtime1.outcome }}"
+          echo "RUNTIME2_OUTCOME=${{ steps.runtime2.outcome }}"
+          echo "RUNTIME3_OUTCOME=${{ steps.runtime3.outcome }}"
+
+          if [ "${{ steps.runtime1.outcome }}" = "success" ] || \
+             [ "${{ steps.runtime2.outcome }}" = "success" ] || \
+             [ "${{ steps.runtime3.outcome }}" = "success" ]; then
+            echo "FINAL_REAL_RUNTIME_SUCCESS=true"
+            echo "AI_SUCCESS_CLAIM=VERIFIED_BY_RUNTIME_TEST"
+            exit 0
+          fi
+
+          echo "FINAL_REAL_RUNTIME_SUCCESS=false"
+          echo "AI_SUCCESS_CLAIM=FORBIDDEN"
+          exit 1
+

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from src.providers.google_provider import GoogleProvider
@@ -227,6 +228,152 @@ SOURCE:
     return result.content or ""
 
 
+# KHALED_RUNTIME_BRIDGE_V5
+
+async def ask_gemini_runtime(evidence):
+    key = os.environ.get("GOOGLE_API_KEY", "")
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not available.")
+
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+    provider = GoogleProvider(api_key=key, model=model)
+
+    prompt = (
+        "Diagnose this REAL Android runtime evidence. "
+        "Do not invent results. Return JSON with diagnosis and patch. "
+        "Patch must be a unified git diff. "
+        "Never modify .github/, .khaled/, .git/, or gradle/wrapper/. "
+        "If no safe fix is supported by evidence, return an empty patch.\n\n"
+        "REAL RUNTIME EVIDENCE:\n"
+        + evidence
+    )
+
+    response = await provider.complete(
+        messages=[
+            {
+                "role": "system",
+                "content": "Evidence-first Android runtime repair engineer.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        temperature=0.0,
+        max_tokens=12000,
+        reasoning_effort="minimal",
+        json_mode=True,
+    )
+
+    raw = response.content or ""
+
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "REAL_GEMINI_RUNTIME_RESPONSE_NOT_JSON"
+        ) from exc
+
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            "REAL_GEMINI_RUNTIME_RESPONSE_INVALID"
+        )
+
+    return result
+
+
+def validate_runtime_patch(patch):
+    protected = (
+        ".github/",
+        ".khaled/",
+        ".git/",
+        "gradle/wrapper/",
+    )
+
+    for line in patch.splitlines():
+        if not line.startswith(("+++ ", "--- ")):
+            continue
+
+        path = line[4:].strip()
+
+        if path.startswith(("a/", "b/")):
+            path = path[2:]
+
+        if path == "/dev/null":
+            continue
+
+        for prefix in protected:
+            if path.startswith(prefix):
+                raise RuntimeError(
+                    "PROTECTED_RUNTIME_PATCH_REJECTED: " + path
+                )
+
+
+async def runtime_repair_main(evidence_file):
+    path = Path(evidence_file)
+
+    if not path.exists():
+        raise RuntimeError("REAL_RUNTIME_EVIDENCE_FILE_MISSING")
+
+    evidence = path.read_text(
+        encoding="utf-8",
+        errors="replace",
+    ).strip()
+
+    if not evidence:
+        raise RuntimeError("REAL_RUNTIME_EVIDENCE_EMPTY")
+
+    print("REAL_RUNTIME_EVIDENCE = PRESENT")
+    print("CALLING_REAL_GEMINI_RUNTIME = TRUE")
+
+    result = await ask_gemini_runtime(evidence)
+
+    diagnosis = str(result.get("diagnosis", "")).strip()
+    print("GEMINI_RUNTIME_DIAGNOSIS =", diagnosis)
+
+    patch = str(result.get("patch", ""))
+
+    if not patch.strip():
+        print("GEMINI_RUNTIME_PATCH = EMPTY")
+        print("RUNTIME_REPAIR_RESULT = NO_SAFE_PATCH")
+        return False
+
+    validate_runtime_patch(patch)
+
+    check = subprocess.run(
+        ["git", "apply", "--check", "--whitespace=nowarn", "-"],
+        input=patch,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    if check.returncode != 0:
+        print("RUNTIME_PATCH_CHECK=FAILED")
+        print(check.stdout[-5000:])
+        return False
+
+    print("RUNTIME_PATCH_CHECK=PASSED")
+
+    applied = subprocess.run(
+        ["git", "apply", "--whitespace=nowarn", "-"],
+        input=patch,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    if applied.returncode != 0:
+        print("RUNTIME_PATCH_APPLY=FAILED")
+        print(applied.stdout[-5000:])
+        return False
+
+    print("RUNTIME_PATCH_APPLY=PASSED")
+    print("RUNTIME_REPAIR_RESULT=PATCH_APPLIED_NOT_YET_VERIFIED")
+    return True
+
 def main():
     for round_no in range(1, MAX_ROUNDS + 1):
 
@@ -348,14 +495,24 @@ def main():
 
 
 if __name__ == "__main__":
+    if "--failure-kind" in sys.argv:
+        i = sys.argv.index("--failure-kind")
+        if i + 1 >= len(sys.argv):
+            raise SystemExit("FAIL-CLOSED: missing failure kind")
+        failure_kind = sys.argv[i + 1]
+        if failure_kind != "runtime":
+            raise SystemExit("FAIL-CLOSED: unsupported failure kind")
+        if "--evidence-file" not in sys.argv:
+            raise SystemExit("FAIL-CLOSED: missing evidence file")
+        j = sys.argv.index("--evidence-file")
+        if j + 1 >= len(sys.argv):
+            raise SystemExit("FAIL-CLOSED: missing evidence path")
+        evidence_file = sys.argv[j + 1]
+        result = asyncio.run(runtime_repair_main(evidence_file))
+        raise SystemExit(0 if result else 2)
+
     success = main()
-
     if not success:
-        print(
-            "AI_SUCCESS_CLAIM=FORBIDDEN"
-        )
+        print("AI_SUCCESS_CLAIM=FORBIDDEN")
         raise SystemExit(1)
-
-    print(
-        "AI_SUCCESS_CLAIM=FORBIDDEN"
-    )
+    print("AI_SUCCESS_CLAIM=FORBIDDEN")

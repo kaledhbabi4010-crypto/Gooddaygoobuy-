@@ -71,37 +71,59 @@ def run(cmd, input_text=None):
 
 
 def extract_patch(response):
+    """Extract only a structurally valid unified git diff."""
     if not response:
         return ""
 
-    text = str(response).strip()
+    text = response.strip()
 
-    if text == "NO_SAFE_PATCH":
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    start = text.find("diff --git ")
+    if start >= 0:
+        patch = text[start:].strip()
+    else:
+        start = text.find("--- ")
+        if start < 0:
+            return ""
+        patch = text[start:].strip()
+
+    lines = patch.splitlines()
+
+    # Unified diff must contain both file headers.
+    if not any(line.startswith("--- ") for line in lines):
         return ""
 
-    # Remove Markdown fences.
-    text = re.sub(
-        r"```(?:diff|patch)?\s*",
-        "",
-        text,
-        flags=re.IGNORECASE
+    if not any(line.startswith("+++ ") for line in lines):
+        return ""
+
+    # A real patch must contain at least one hunk or a valid binary diff.
+    has_hunk = any(line.startswith("@@ ") for line in lines)
+    has_binary = any(line.startswith("Binary files ") for line in lines)
+
+    if not has_hunk and not has_binary:
+        return ""
+
+    # Reject obvious prose accidentally returned by the model.
+    bad_prefixes = (
+        "Here is",
+        "Sure,",
+        "The fix",
+        "Explanation:",
+        "```"
     )
-    text = text.replace("```", "")
 
-    # Prefer complete git diff.
-    pos = text.find("diff --git ")
-    if pos >= 0:
-        return text[pos:].strip()
+    for line in lines:
+        if line.strip().startswith(bad_prefixes):
+            return ""
 
-    # Standard unified diff.
-    pos = text.find("--- ")
-    if pos >= 0:
-        candidate = text[pos:].strip()
-        if "\n+++ " in candidate:
-            return candidate
-
-    return ""
-
+    return patch + "\n"
 
 def protected_patch(patch):
     if not patch:

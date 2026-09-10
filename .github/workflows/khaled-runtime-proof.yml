@@ -88,15 +88,26 @@ jobs:
             adb devices
             adb shell getprop ro.build.version.sdk
 
-            echo "=== APK ==="
-            APK="app/build/outputs/apk/debug/app-debug.apk"
-            test -f "$APK"
-            ls -lh "$APK"
+            echo "=== APK DISCOVERY ==="
 
-            echo "APK_EXISTS=true"
+            APK=$(find app/build/outputs/apk               -type f -name "*.apk"               -print -quit)
+
+            if [ -z "$APK" ]; then
+              echo "REAL_APK_FOUND=false"
+              echo "ERROR: No APK produced by Gradle"
+              echo "=== BUILD OUTPUTS ==="
+              find app/build/outputs -maxdepth 6 -type f -print || true
+              exit 1
+            fi
+
+            echo "REAL_APK_FOUND=true"
+            echo "APK_PATH=$APK"
+            ls -lh "$APK"
 
             echo "=== INSTALL ==="
             adb install -r "$APK"
+
+            echo "APK_INSTALL_SUCCESS=true"
 
             echo "APK_INSTALL_SUCCESS=true"
 

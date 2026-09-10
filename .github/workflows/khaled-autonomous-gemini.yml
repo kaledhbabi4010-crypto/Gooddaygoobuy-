@@ -1,0 +1,102 @@
+name: KHALED - Autonomous Gemini Repair
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  autonomous-repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: gemini-3.6-flash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Verify Gemini secret
+        shell: bash
+        run: |
+          if [ -z "$GOOGLE_API_KEY" ]; then
+            echo "GEMINI_SECRET_PRESENT=FALSE"
+            exit 1
+          fi
+          echo "GEMINI_SECRET_PRESENT=TRUE"
+          echo "GEMINI_MODEL=$GEMINI_MODEL"
+
+      - name: Install AI reviewer
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .khaled/ai-code-reviewer
+
+      - name: Verify Gradle
+        shell: bash
+        run: |
+          test -f ./gradlew
+          chmod +x ./gradlew
+          echo "GRADLE_WRAPPER_PRESENT=TRUE"
+
+      - name: Run KHALED repair engine
+        shell: bash
+        env:
+          PYTHONPATH: .khaled/ai-code-reviewer
+        run: |
+          python .khaled/runtime/khaled_repair_engine.py
+
+      - name: Final verification
+        if: success()
+        shell: bash
+        run: |
+          echo "REAL_BUILD_SUCCESS=TRUE"
+          echo "AI_SUCCESS_CLAIM=FORBIDDEN"
+
+          APK_COUNT=$(find . -type f -name "*.apk" | wc -l)
+          echo "APK_COUNT=$APK_COUNT"
+
+          if [ "$APK_COUNT" -gt 0 ]; then
+            echo "APK_EVIDENCE=TRUE"
+          else
+            echo "APK_EVIDENCE=FALSE"
+          fi
+
+      - name: Commit verified repair
+        if: success()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ -n "$(git status --short)" ]; then
+            git add -A
+            git commit -m "KHALED: verified autonomous repair [skip ci]" || true
+            git push
+          else
+            echo "NO_REPAIR_COMMIT_NEEDED=TRUE"
+          fi
+
+      - name: Failure truth gate
+        if: failure()
+        shell: bash
+        run: |
+          echo "REAL_BUILD_SUCCESS=FALSE"
+          echo "AI_SUCCESS_CLAIM=FORBIDDEN"
+          echo "FINAL_RESULT=NOT_VERIFIED"

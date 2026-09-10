@@ -232,7 +232,7 @@ Rules:
             + str(build_log)
         )
 
-        result = provider.complete(
+        result = await provider.complete(
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user}

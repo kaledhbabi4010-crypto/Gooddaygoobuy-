@@ -9,94 +9,116 @@ permissions:
 jobs:
   autonomous-repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     env:
       GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: gemini-3.6-flash
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+          echo 'ANDROID_SDK_35_READY=TRUE'
+
+      - name: Setup Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Verify Gemini secret
         shell: bash
         run: |
-          if [ -z "$GOOGLE_API_KEY" ]; then
-            echo "GEMINI_SECRET_PRESENT=FALSE"
-            exit 1
+          if [ -n "$GOOGLE_API_KEY" ]; then
+            echo 'GEMINI_SECRET_INJECTED=TRUE'
+          else
+            echo 'GEMINI_SECRET_INJECTED=FALSE'
+            exit 20
           fi
-          echo "GEMINI_SECRET_PRESENT=TRUE"
-          echo "GEMINI_MODEL=$GEMINI_MODEL"
 
-      - name: Install AI reviewer
+      - name: Generate Gradle wrappers
+        shell: bash
+        run: |
+          set -e
+          for project in android_app khaled_android; do
+            echo "GENERATING_WRAPPER=$project"
+            cd "$project"
+            if [ ! -f gradlew ]; then
+              gradle wrapper --gradle-version 8.7
+            fi
+            chmod +x gradlew
+            test -f gradlew
+            test -f gradle/wrapper/gradle-wrapper.jar
+            ./gradlew --version
+            cd ..
+          done
+          echo 'GRADLE_WRAPPERS_READY=TRUE'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install KHALED runtime
         shell: bash
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .khaled/ai-code-reviewer
 
-      - name: Verify Gradle
+      - name: Validate KHALED engine
         shell: bash
+        env:
+          PYTHONPATH: .khaled/ai-code-reviewer
         run: |
-          test -f ./gradlew
-          chmod +x ./gradlew
-          echo "GRADLE_WRAPPER_PRESENT=TRUE"
+          python -m py_compile .khaled/runtime/khaled_repair_engine.py
+          echo 'PYTHON_ENGINE_SYNTAX=VALID'
 
-      - name: Run KHALED repair engine
+      - name: Run KHALED autonomous repair
         shell: bash
         env:
           PYTHONPATH: .khaled/ai-code-reviewer
         run: |
           python .khaled/runtime/khaled_repair_engine.py
 
-      - name: Final verification
-        if: success()
+      - name: Final real build gate
         shell: bash
         run: |
-          echo "REAL_BUILD_SUCCESS=TRUE"
-          echo "AI_SUCCESS_CLAIM=FORBIDDEN"
-
-          APK_COUNT=$(find . -type f -name "*.apk" | wc -l)
-          echo "APK_COUNT=$APK_COUNT"
-
-          if [ "$APK_COUNT" -gt 0 ]; then
-            echo "APK_EVIDENCE=TRUE"
-          else
-            echo "APK_EVIDENCE=FALSE"
-          fi
+          set -e
+          for project in android_app khaled_android; do
+            echo "FINAL_REAL_BUILD=$project"
+            cd "$project"
+            ./gradlew --no-daemon assembleDebug
+            cd ..
+          done
+          echo 'FINAL_REAL_BUILD_SUCCESS=TRUE'
 
       - name: Commit verified repair
-        if: success()
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if [ -n "$(git status --short)" ]; then
-            git add -A
-            git commit -m "KHALED: verified autonomous repair [skip ci]" || true
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name 'KHALED'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add android_app khaled_android .khaled/runtime/khaled_repair_engine.py
+            git commit -m 'KHALED: verified autonomous Android repair [skip ci]'
             git push
+            echo 'VERIFIED_REPAIR_COMMITTED=TRUE'
           else
-            echo "NO_REPAIR_COMMIT_NEEDED=TRUE"
+            echo 'NO_REPAIR_CHANGES_TO_COMMIT=TRUE'
           fi
-
-      - name: Failure truth gate
-        if: failure()
-        shell: bash
-        run: |
-          echo "REAL_BUILD_SUCCESS=FALSE"
-          echo "AI_SUCCESS_CLAIM=FORBIDDEN"
-          echo "FINAL_RESULT=NOT_VERIFIED"

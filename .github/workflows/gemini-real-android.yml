@@ -78,8 +78,8 @@ jobs:
       # 5. Build BOTH existing Android applications
       # ------------------------------------------------------------
       - name: Build Android applications
-  id: initial_build
-      continue-on-error: true
+        id: initial_build
+        continue-on-error: true
         run: |
           set -e
 
@@ -130,11 +130,10 @@ jobs:
       # REAL BUILD FAILURE -> GEMINI -> REPAIR -> VERIFIED REBUILD
       # ------------------------------------------------------------
       - name: KHALED - Gemini Autonomous Build Repair
-  env:
-    KHALED_ROOT_FIX_EVIDENCE: "true"
         if: steps.initial_build.outcome == 'failure'
         id: khaled_repair
         env:
+          KHALED_ROOT_FIX_EVIDENCE: "true"
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ env.GEMINI_MODEL }}
         run: |
@@ -354,9 +353,9 @@ jobs:
           echo "Android: ${{ steps.device.outputs.version }}"
           echo "=================================================="
 
-    echo "KHALED_FINAL_TRUTH_GATE=true"
-    echo "KHALED_RULE=REAL_EXECUTION_ONLY"
-    echo "KHALED_NO_FABRICATED_SUCCESS=true"
+          echo "KHALED_FINAL_TRUTH_GATE=true"
+          echo "KHALED_RULE=REAL_EXECUTION_ONLY"
+          echo "KHALED_NO_FABRICATED_SUCCESS=true"
 
           gcloud firebase test android run \
             --type robo \

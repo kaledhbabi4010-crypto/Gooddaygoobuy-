@@ -1,0 +1,219 @@
+name: KHALED GROQ REAL REPAIR
+
+on:
+  push:
+    branches:
+      - khaled-gemini-direct-fix
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: khaled-gemini-direct-fix
+          fetch-depth: 0
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip requests
+
+      - name: Groq autonomous repair
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          cat > /tmp/khaled_repair.py <<'PY'
+          import os, subprocess, requests, json, re, pathlib, sys
+
+          KEY=os.environ["GROQ_API_KEY"]
+          REPO=os.environ["REPO"]
+          BRANCH="khaled-gemini-direct-fix"
+
+          def sh(cmd):
+              p=subprocess.run(cmd,shell=True,text=True,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT)
+              return p.returncode,p.stdout[-12000:]
+
+          # Real repository inventory
+          _,tree=sh(
+              "git ls-files | grep -v '^\\.git/' | "
+              "grep -Ev '(^|/)(bin|obj|node_modules|\\.gradle)/' | head -n 400"
+          )
+
+          # Real status/build clues
+          _,status=sh("git status --short")
+          _,dotnet=sh("find . -name '*.sln' -o -name '*.csproj' | head -50")
+          _,gradle=sh("find . -maxdepth 4 -name 'gradlew' -o -name 'build.gradle*' | head -50")
+
+          context=f"""
+          REPOSITORY: {REPO}
+          BRANCH: {BRANCH}
+
+          FILES:
+          {tree}
+
+          GIT STATUS:
+          {status}
+
+          DOTNET PROJECTS:
+          {dotnet}
+
+          ANDROID/GRADLE:
+          {gradle}
+          """
+
+          prompt=f"""
+          You are the REAL repair engineer for this repository.
+
+          Work ONLY on branch {BRANCH}.
+          NEVER modify main or khaled-repair-v6.
+
+          Baseline is:
+          khaled-repair-v6
+          c87edb18335e5869ed2278e1ecf18ee579c4cc6e
+
+          Your task is actual maintenance, NOT code review.
+
+          First determine the real project structure and likely broken implementation.
+          Focus on existing code. Do NOT create a replacement project.
+
+          You must return a SINGLE unified git diff.
+          The diff must contain only real source/config/test changes required
+          to repair the project.
+
+          Do not fabricate test results.
+          Do not claim success without evidence.
+          Do not modify generated logs/artifacts.
+
+          Repository information:
+          {context}
+
+          Return ONLY:
+          ```diff
+          <unified diff>
+          ```
+
+          If there is not enough evidence for a safe source change,
+          return an empty diff.
+          """
+
+          url="https://api.groq.com/openai/v1/chat/completions"
+
+          data={
+            "model":"llama-3.3-70b-versatile",
+            "messages":[
+              {
+                "role":"system",
+                "content":
+                "You are a precise software repair engineer. "
+                "Never invent repository facts."
+              },
+              {"role":"user","content":prompt}
+            ],
+            "temperature":0.1,
+            "max_tokens":16000
+          }
+
+          r=requests.post(
+              url,
+              headers={
+                "Authorization":f"Bearer {KEY}",
+                "Content-Type":"application/json"
+              },
+              json=data,
+              timeout=180
+          )
+
+          if r.status_code != 200:
+              print(r.text)
+              sys.exit(1)
+
+          answer=r.json()["choices"][0]["message"]["content"]
+
+          m=re.search(r"```diff\s*(.*?)```",answer,re.S)
+          if not m:
+              print("NO VALID PATCH RETURNED")
+              print(answer[-5000:])
+              sys.exit(0)
+
+          patch=m.group(1).strip()
+
+          if not patch:
+              print("EMPTY PATCH")
+              sys.exit(0)
+
+          pathlib.Path("/tmp/repair.patch").write_text(patch)
+
+          code,out=sh("git apply --check /tmp/repair.patch")
+          if code != 0:
+              print("PATCH CHECK FAILED")
+              print(out)
+              sys.exit(1)
+
+          code,out=sh("git apply /tmp/repair.patch")
+          if code != 0:
+              print("PATCH APPLY FAILED")
+              print(out)
+              sys.exit(1)
+
+          print("REAL PATCH APPLIED")
+          print(sh("git diff --stat")[1])
+          print(sh("git diff --check")[1])
+
+          # Detect and run real builds/tests where possible
+          if pathlib.Path("*.sln").exists() or list(pathlib.Path(".").rglob("*.sln")):
+              print("RUNNING REAL DOTNET BUILD")
+              code,out=sh("dotnet build --no-restore 2>&1")
+              print(out)
+          elif list(pathlib.Path(".").rglob("gradlew")):
+              print("RUNNING REAL GRADLE TEST")
+              code,out=sh(
+                  "chmod +x $(find . -name gradlew | head -1) && "
+                  "$(find . -name gradlew | head -1) test 2>&1"
+              )
+              print(out)
+          else:
+              print("NO STANDARD BUILD SYSTEM DETECTED")
+
+          # Commit only actual source changes
+          sh("git config user.name 'KHALED-GROQ-REPAIR'")
+          sh("git config user.email '41898282+github-actions[bot]@users.noreply.github.com'")
+
+          code,out=sh("git status --short")
+          print("FINAL STATUS")
+          print(out)
+
+          if out.strip():
+              code,out=sh(
+                  "git add -A && "
+                  "git reset -- '*.log' '*.tmp' 2>/dev/null || true && "
+                  "git status --short"
+              )
+              print(out)
+
+              code,out=sh(
+                  "git commit -m 'KHALED: Groq real repair'"
+              )
+              print(out)
+
+              if code == 0:
+                  code,out=sh(
+                      "git push origin khaled-gemini-direct-fix"
+                  )
+                  print(out)
+
+          print("GROQ REPAIR EXECUTION FINISHED")
+          PY
+
+          python /tmp/khaled_repair.py

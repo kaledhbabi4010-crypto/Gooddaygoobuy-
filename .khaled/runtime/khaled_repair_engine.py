@@ -251,36 +251,92 @@ def repair(build_log):
     return 0
 
 
+
+
+def rollback_last_patch():
+    print("KHALED_ROLLBACK_START=true")
+
+    # Reverse only the currently applied working-tree patch.
+    result = run(
+        ["git", "diff", "--quiet"]
+    )
+
+    if result.returncode == 0:
+        print("ROLLBACK_RESULT=NOTHING_TO_ROLLBACK")
+        return 0
+
+    reverse = run(
+        ["git", "diff", "--binary"],
+        ""
+    )
+
+    if reverse.returncode != 0 or not reverse.stdout.strip():
+        print("ROLLBACK_RESULT=NO_WORKTREE_DIFF")
+        return 1
+
+    apply_reverse = run(
+        ["git", "apply", "-R", "--whitespace=nowarn", "-"],
+        reverse.stdout
+    )
+
+    print("ROLLBACK_EXIT=", apply_reverse.returncode)
+
+    if apply_reverse.returncode != 0:
+        print("ROLLBACK_RESULT=FAILED")
+        print(apply_reverse.stdout[-10000:])
+        return 2
+
+    print("ROLLBACK_RESULT=SUCCESS")
+    return 0
+
+
 def main():
     if "--failure-kind" not in sys.argv:
         print("ERROR: --failure-kind required")
         return 10
 
-    if "--build-log" not in sys.argv:
-        print("ERROR: --build-log required")
+    # Accept either --build-log or --evidence-file.
+    log_file = None
+
+    for flag in ("--build-log", "--evidence-file"):
+        if flag in sys.argv:
+            try:
+                idx = sys.argv.index(flag) + 1
+                log_file = sys.argv[idx]
+                break
+            except Exception:
+                print("ERROR: evidence path missing")
+                return 11
+
+    if not log_file:
+        print("ERROR: --build-log or --evidence-file required")
         return 11
 
-    try:
-        log_index = sys.argv.index("--build-log") + 1
-        log_file = sys.argv[log_index]
-    except Exception:
-        print("ERROR: build log path missing")
+    if not os.path.exists(log_file):
+        print("ERROR: evidence file does not exist")
         return 12
 
-    if not os.path.exists(log_file):
-        print("ERROR: build log does not exist")
-        return 13
-
-    build_log = Path(log_file).read_text(
+    evidence = Path(log_file).read_text(
         encoding="utf-8",
         errors="replace"
     )
 
-    print("FAILURE_KIND=", sys.argv[sys.argv.index("--failure-kind") + 1])
-    print("BUILD_LOG_BYTES=", len(build_log))
+    failure_kind = sys.argv[
+        sys.argv.index("--failure-kind") + 1
+    ]
 
-    return repair(build_log)
+    print("FAILURE_KIND=", failure_kind)
+    print("EVIDENCE_FILE=", log_file)
+    print("EVIDENCE_BYTES=", len(evidence.encode()))
+
+    if not evidence.strip():
+        print("ERROR: evidence is empty")
+        return 13
+
+    return repair(evidence)
 
 
 if __name__ == "__main__":
+    if "--rollback" in sys.argv:
+        raise SystemExit(rollback_last_patch())
     raise SystemExit(main())

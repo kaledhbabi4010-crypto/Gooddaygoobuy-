@@ -293,7 +293,17 @@ async def ask_gemini(build_log, failure_kind):
         print("GEMINI_SECRET_MISSING=true")
         return ""
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
+    allowed = (
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    )
+    if model not in allowed:
+        print("GEMINI_MODEL_OVERRIDE=", model, "->gemini-2.5-flash")
+        model = "gemini-2.5-flash"
     provider = load_google_provider()(api_key=key, model=model)
 
     target = _get_target_file_context(build_log)
@@ -347,6 +357,11 @@ def repair(build_log, failure_kind):
     import os, re, subprocess
 
     print("KHALED_DIRECT_FILE_REPAIR=true")
+
+    tail = "\n".join(str(build_log).splitlines()[-150:])
+    print("----- REAL BUILD LOG TAIL -----")
+    print(tail)
+    print("----- END REAL BUILD LOG TAIL -----")
 
     context = _get_target_file_context(build_log)
 

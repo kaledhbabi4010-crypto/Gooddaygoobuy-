@@ -1,0 +1,165 @@
+name: KHALED Runtime Proof
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: |
+          sdkmanager "platform-tools" \
+                     "platforms;android-35" \
+                     "build-tools;35.0.0"
+
+      - name: Prepare Gradle wrappers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for p in android_app khaled_android; do
+            test -f "$p/gradlew"
+            chmod +x "$p/gradlew"
+          done
+
+      - name: Real unit/build verification
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd android_app
+          ./gradlew test assembleDebug --no-daemon --stacktrace
+
+          cd ../khaled_android
+          ./gradlew test assembleDebug --no-daemon --stacktrace
+
+          echo "REAL_BUILD_AND_UNIT_TEST_SUCCESS=true"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -e /dev/kvm
+          echo "KVM_READY=true"
+
+      - name: Android emulator — install, launch and runtime proof
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          avd-name: khaled-test
+          force-avd-creation: true
+          emulator-boot-timeout: 600
+          disable-animations: true
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -noaudio
+            -no-boot-anim
+            -camera-back none
+            -camera-front none
+          working-directory: android_app
+          script: |
+            set -euo pipefail
+
+            echo "=== DEVICE ==="
+            adb devices
+            adb shell getprop ro.build.version.sdk
+
+            echo "=== APK ==="
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+            test -f "$APK"
+            ls -lh "$APK"
+
+            echo "APK_EXISTS=true"
+
+            echo "=== INSTALL ==="
+            adb install -r "$APK"
+
+            echo "APK_INSTALL_SUCCESS=true"
+
+            echo "=== PACKAGE ==="
+            PKG="com.quickservice.giant"
+            adb shell pm list packages | grep "$PKG"
+
+            echo "PACKAGE_PRESENT=true"
+
+            echo "=== LAUNCH ==="
+            ACTIVITY=$(adb shell cmd package resolve-activity \
+              --brief "$PKG" | tail -n 1 | tr -d '\r')
+
+            echo "RESOLVED_ACTIVITY=$ACTIVITY"
+
+            test -n "$ACTIVITY"
+
+            adb shell am force-stop "$PKG"
+            adb shell monkey -p "$PKG" 1
+
+            sleep 8
+
+            echo "APP_LAUNCH_COMMAND_SUCCESS=true"
+
+            echo "=== RUNTIME CHECK ==="
+            adb shell pidof "$PKG"
+
+            echo "APP_PROCESS_RUNNING=true"
+
+            echo "=== LOGCAT CRASH SCAN ==="
+            adb logcat -d -t 500 > runtime-logcat.txt
+
+            if grep -E \
+              "FATAL EXCEPTION|AndroidRuntime: FATAL|Process: $PKG" \
+              runtime-logcat.txt; then
+              echo "RUNTIME_CRASH_DETECTED=true"
+              exit 1
+            fi
+
+            echo "RUNTIME_CRASH_DETECTED=false"
+            echo "FINAL_REAL_RUNTIME_SUCCESS=true"
+
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KHALED-runtime-proof
+          path: |
+            android_app/app/build/reports/
+            android_app/app/build/outputs/apk/debug/*.apk
+            android_app/runtime-logcat.txt
+          if-no-files-found: ignore
+
+      - name: FINAL TRUTH GATE
+        if: success()
+        run: |
+          echo "========================================"
+          echo "FINAL_REAL_RUNTIME_SUCCESS=true"
+          echo "BUILD=true"
+          echo "UNIT_TEST=true"
+          echo "EMULATOR=true"
+          echo "APK_INSTALL=true"
+          echo "APP_LAUNCH=true"
+          echo "RUNTIME_PROCESS=true"
+          echo "CRASH_SCAN=true"
+          echo "========================================"

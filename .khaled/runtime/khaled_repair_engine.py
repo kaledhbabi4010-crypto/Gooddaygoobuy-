@@ -1,518 +1,286 @@
-import asyncio
-import json
+#!/usr/bin/env python3
+"""
+KHALED SELF-MAINTENANCE ENGINE V7
+
+Purpose:
+REAL BUILD FAILURE
+    -> read evidence
+    -> ask Gemini for MINIMAL unified diff
+    -> validate patch
+    -> apply patch
+    -> stop safely
+
+No fake success.
+No runtime claim.
+No broad file rewriting.
+"""
+
 import os
-import re
-import subprocess
 import sys
+import re
+import json
+import asyncio
+import subprocess
 from pathlib import Path
 
-from src.providers.google_provider import GoogleProvider
+ROOT = Path(__file__).resolve().parents[2]
+REVIEWER = Path(__file__).resolve().parents[1] / "ai-code-reviewer"
 
-ROOT = Path(".").resolve()
-MAX_ROUNDS = 5
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-PROTECTED = (
-    ".github/",
-    ".khaled/",
-    ".git/",
-    "gradle/wrapper/",
-)
+if str(REVIEWER) not in sys.path:
+    sys.path.insert(0, str(REVIEWER))
+
+GoogleProvider = None
+
+def load_google_provider():
+    global GoogleProvider
+
+    if GoogleProvider is not None:
+        return GoogleProvider
+
+    reviewer = Path(__file__).resolve().parents[1] / "ai-code-reviewer"
+
+    if not reviewer.exists():
+        raise RuntimeError(
+            "KHALED_REVIEWER_NOT_FOUND: " + str(reviewer)
+        )
+
+    if str(reviewer) not in sys.path:
+        sys.path.insert(0, str(reviewer))
+
+    from src.providers.google_provider import GoogleProvider as GP
+
+    GoogleProvider = GP
+    return GoogleProvider
 
 
-def run(cmd):
-    p = subprocess.run(
+MAX_LOG = 30000
+MAX_RESPONSE = 30000
+
+
+def run(cmd, input_text=None):
+    return subprocess.run(
         cmd,
-        cwd=ROOT,
+        input=input_text,
         text=True,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.STDOUT
     )
-    return p.returncode, p.stdout
-
-
-def get_build_command():
-    """Return the real Gradle command for both Android projects."""
-    projects = ["android_app", "khaled_android"]
-
-    for project in projects:
-        wrapper = ROOT / project / "gradlew"
-        if not wrapper.exists():
-            raise FileNotFoundError(
-                f"REAL_GRADLE_WRAPPER_MISSING: {wrapper}"
-            )
-        wrapper.chmod(0o755)
-
-    return [
-        "bash",
-        "-lc",
-        "set -o pipefail; "
-        "cd android_app && ./gradlew --no-daemon assembleDebug "
-        "&& cd ../khaled_android && ./gradlew --no-daemon assembleDebug"
-    ]
-
-def protected_patch(patch):
-    for line in patch.splitlines():
-        if line.startswith("--- ") or line.startswith("+++ "):
-            path = line[4:].strip()
-
-            if path.startswith("a/") or path.startswith("b/"):
-                path = path[2:]
-
-            for protected in PROTECTED:
-                if path.startswith(protected):
-                    return True, path
-
-    return False, ""
 
 
 def extract_patch(response):
     if not response:
         return ""
 
-    response = response.strip()
+    text = str(response).strip()
 
-    try:
-        data = json.loads(response)
+    if text == "NO_SAFE_PATCH":
+        return ""
 
-        patch = data.get("patch", "")
-
-        if isinstance(patch, str):
-            return patch.strip()
-
-    except Exception:
-        pass
-
-    match = re.search(
-        r"```(?:diff|patch)?\s*(.*?)```",
-        response,
-        re.DOTALL | re.IGNORECASE,
+    # Remove Markdown fences.
+    text = re.sub(
+        r"```(?:diff|patch)?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE
     )
+    text = text.replace("```", "")
 
-    if match:
-        return match.group(1).strip()
+    # Prefer complete git diff.
+    pos = text.find("diff --git ")
+    if pos >= 0:
+        return text[pos:].strip()
 
-    if "diff --git " in response:
-        return response[
-            response.index("diff --git "):
-        ].strip()
+    # Standard unified diff.
+    pos = text.find("--- ")
+    if pos >= 0:
+        candidate = text[pos:].strip()
+        if "\n+++ " in candidate:
+            return candidate
 
     return ""
 
 
-def collect_source():
-    result = []
+def protected_patch(patch):
+    if not patch:
+        return False
 
-    extensions = {
-        ".kt",
-        ".java",
-        ".gradle",
-        ".xml",
-        ".properties",
-        ".json",
-        ".toml",
-    }
-
-    excluded = (
-        ".git/",
+    forbidden = [
         ".github/",
         ".khaled/",
-        "build/",
-        ".gradle/",
-    )
+        ".git/",
+        "gradle/wrapper/",
+        "gradlew",
+        "gradlew.bat",
+    ]
 
-    for path in ROOT.rglob("*"):
-        if not path.is_file():
-            continue
+    for line in patch.splitlines():
+        if line.startswith("+++ ") or line.startswith("--- "):
+            for item in forbidden:
+                if item in line:
+                    return False
 
-        rel = path.relative_to(ROOT).as_posix()
-
-        if any(rel.startswith(x) for x in excluded):
-            continue
-
-        if path.suffix.lower() not in extensions:
-            continue
-
-        try:
-            text = path.read_text(
-                encoding="utf-8",
-                errors="ignore",
-            )
-        except Exception:
-            continue
-
-        if len(text) > 10000:
-            text = text[:10000]
-
-        result.append(
-            f"\n===== {rel} =====\n{text}"
-        )
-
-        if len(result) >= 50:
-            break
-
-    return "".join(result)
+    return True
 
 
 async def ask_gemini(build_log):
     key = os.environ.get("GOOGLE_API_KEY", "")
 
     if not key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not available."
-        )
+        raise RuntimeError("GOOGLE_API_KEY missing")
 
     model = os.environ.get(
         "GEMINI_MODEL",
-        "gemini-3.6-flash",
+        "gemini-3.6-flash"
     )
 
-    provider = GoogleProvider(
+    provider_class = load_google_provider()
+
+    provider = provider_class(
         api_key=key,
-        model=model,
+        model=model
     )
 
-    source = collect_source()
+    prompt = """
+You are KHALED SELF-MAINTENANCE ENGINE.
 
-    prompt = f"""
-You are a conservative autonomous repair engine.
+A REAL build failed.
 
-A REAL Gradle build has failed.
+Return ONLY a minimal unified git diff.
 
-Use ONLY the supplied build evidence and source context.
-
-Requirements:
-
-1. Diagnose the actual failure.
-2. Produce the smallest safe source change.
-3. Return a unified git diff.
-4. Never modify .github files.
-5. Never modify .khaled files.
-6. Never modify gradle/wrapper files.
-7. Never invent build or test results.
-8. If a safe fix cannot be determined, return an empty patch.
-
-Return JSON only:
-
-{{
-  "diagnosis": "short explanation",
-  "patch": "unified git diff"
-}}
+Rules:
+- Fix only the demonstrated build failure.
+- Change the smallest possible number of lines.
+- Do not modify .github/
+- Do not modify .khaled/
+- Do not modify gradle/wrapper/
+- Do not rewrite whole files.
+- Do not invent test results.
+- Do not explain anything.
+- No Markdown fences.
+- If no safe repair exists, return exactly:
+NO_SAFE_PATCH
 
 REAL BUILD LOG:
-{build_log[-30000:]}
-
-SOURCE:
-{source}
-"""
+""" + build_log[-MAX_LOG:]
 
     result = await provider.complete(
         messages=[
             {
                 "role": "system",
                 "content": (
-                    "You are a conservative software "
-                    "repair engine."
-                ),
+                    "Return only a valid minimal unified git diff."
+                )
             },
             {
                 "role": "user",
-                "content": prompt,
-            },
+                "content": prompt
+            }
         ],
         temperature=0,
-        max_tokens=12000,
-        reasoning_effort="minimal",
-        json_mode=True,
+        max_tokens=8000,
+        json_mode=False
     )
 
-    return result.content or ""
+    response = (result.content or "").strip()
+
+    print("GEMINI_RESPONSE =", bool(response))
+    print("GEMINI_RESPONSE_LENGTH =", len(response))
+
+    return response[:MAX_RESPONSE]
 
 
-# KHALED_RUNTIME_BRIDGE_V5
+def repair(build_log):
+    print("KHALED_REPAIR_START=true")
 
-async def ask_gemini_runtime(evidence):
-    key = os.environ.get("GOOGLE_API_KEY", "")
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY is not available.")
-
-    model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-    provider = GoogleProvider(api_key=key, model=model)
-
-    prompt = (
-        "Diagnose this REAL Android runtime evidence. "
-        "Do not invent results. Return JSON with diagnosis and patch. "
-        "Patch must be a unified git diff. "
-        "Never modify .github/, .khaled/, .git/, or gradle/wrapper/. "
-        "If no safe fix is supported by evidence, return an empty patch.\n\n"
-        "REAL RUNTIME EVIDENCE:\n"
-        + evidence
+    response = asyncio.run(
+        ask_gemini(build_log)
     )
 
-    response = await provider.complete(
-        messages=[
-            {
-                "role": "system",
-                "content": "Evidence-first Android runtime repair engineer.",
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        temperature=0.0,
-        max_tokens=12000,
-        reasoning_effort="minimal",
-        json_mode=True,
+    patch = extract_patch(response)
+
+    print(
+        "PATCH_DETECTED=",
+        bool(patch)
     )
 
-    raw = response.content or ""
+    if not patch:
+        print("REPAIR_RESULT=NO_PATCH")
+        return 2
 
-    try:
-        result = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            "REAL_GEMINI_RUNTIME_RESPONSE_NOT_JSON"
-        ) from exc
+    if not protected_patch(patch):
+        print("REPAIR_RESULT=PROTECTED_PATH_REJECTED")
+        return 3
 
-    if not isinstance(result, dict):
-        raise RuntimeError(
-            "REAL_GEMINI_RUNTIME_RESPONSE_INVALID"
-        )
+    print("PATCH_VALIDATION_START=true")
 
-    return result
-
-
-def validate_runtime_patch(patch):
-    protected = (
-        ".github/",
-        ".khaled/",
-        ".git/",
-        "gradle/wrapper/",
-    )
-
-    for line in patch.splitlines():
-        if not line.startswith(("+++ ", "--- ")):
-            continue
-
-        path = line[4:].strip()
-
-        if path.startswith(("a/", "b/")):
-            path = path[2:]
-
-        if path == "/dev/null":
-            continue
-
-        for prefix in protected:
-            if path.startswith(prefix):
-                raise RuntimeError(
-                    "PROTECTED_RUNTIME_PATCH_REJECTED: " + path
-                )
-
-
-async def runtime_repair_main(evidence_file):
-    path = Path(evidence_file)
-
-    if not path.exists():
-        raise RuntimeError("REAL_RUNTIME_EVIDENCE_FILE_MISSING")
-
-    evidence = path.read_text(
-        encoding="utf-8",
-        errors="replace",
-    ).strip()
-
-    if not evidence:
-        raise RuntimeError("REAL_RUNTIME_EVIDENCE_EMPTY")
-
-    print("REAL_RUNTIME_EVIDENCE = PRESENT")
-    print("CALLING_REAL_GEMINI_RUNTIME = TRUE")
-
-    result = await ask_gemini_runtime(evidence)
-
-    diagnosis = str(result.get("diagnosis", "")).strip()
-    print("GEMINI_RUNTIME_DIAGNOSIS =", diagnosis)
-
-    patch = str(result.get("patch", ""))
-
-    if not patch.strip():
-        print("GEMINI_RUNTIME_PATCH = EMPTY")
-        print("RUNTIME_REPAIR_RESULT = NO_SAFE_PATCH")
-        return False
-
-    validate_runtime_patch(patch)
-
-    check = subprocess.run(
+    check = run(
         ["git", "apply", "--check", "--whitespace=nowarn", "-"],
-        input=patch,
-        cwd=ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        patch
+    )
+
+    print(
+        "PATCH_CHECK_EXIT=",
+        check.returncode
     )
 
     if check.returncode != 0:
-        print("RUNTIME_PATCH_CHECK=FAILED")
-        print(check.stdout[-5000:])
-        return False
+        print("PATCH_CHECK_FAILED=true")
+        print(check.stdout[-10000:])
+        return 4
 
-    print("RUNTIME_PATCH_CHECK=PASSED")
-
-    applied = subprocess.run(
+    apply = run(
         ["git", "apply", "--whitespace=nowarn", "-"],
-        input=patch,
-        cwd=ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        patch
     )
 
-    if applied.returncode != 0:
-        print("RUNTIME_PATCH_APPLY=FAILED")
-        print(applied.stdout[-5000:])
-        return False
+    print(
+        "PATCH_APPLY_EXIT=",
+        apply.returncode
+    )
 
-    print("RUNTIME_PATCH_APPLY=PASSED")
-    print("RUNTIME_REPAIR_RESULT=PATCH_APPLIED_NOT_YET_VERIFIED")
-    return True
+    if apply.returncode != 0:
+        print("PATCH_APPLY_FAILED=true")
+        print(apply.stdout[-10000:])
+        return 5
+
+    print("PATCH_APPLIED=true")
+    print("REPAIR_RESULT=PATCH_APPLIED")
+    return 0
+
 
 def main():
-    for round_no in range(1, MAX_ROUNDS + 1):
+    if "--failure-kind" not in sys.argv:
+        print("ERROR: --failure-kind required")
+        return 10
 
-        print("")
-        print("=" * 70)
-        print(
-            f"KHALED REPAIR ROUND "
-            f"{round_no}/{MAX_ROUNDS}"
-        )
-        print("=" * 70)
+    if "--build-log" not in sys.argv:
+        print("ERROR: --build-log required")
+        return 11
 
-        command = get_build_command()
+    try:
+        log_index = sys.argv.index("--build-log") + 1
+        log_file = sys.argv[log_index]
+    except Exception:
+        print("ERROR: build log path missing")
+        return 12
 
-        print(
-            "BUILD COMMAND =",
-            " ".join(command),
-        )
+    if not os.path.exists(log_file):
+        print("ERROR: build log does not exist")
+        return 13
 
-        code, log = run(command)
+    build_log = Path(log_file).read_text(
+        encoding="utf-8",
+        errors="replace"
+    )
 
-        Path("/tmp/khaled-build.log").write_text(
-            log,
-            encoding="utf-8",
-        )
+    print("FAILURE_KIND=", sys.argv[sys.argv.index("--failure-kind") + 1])
+    print("BUILD_LOG_BYTES=", len(build_log))
 
-        print("BUILD_EXIT_CODE =", code)
-
-        if code == 0:
-            print("REAL_BUILD_SUCCESS=TRUE")
-            return True
-
-        print("REAL_BUILD_SUCCESS=FALSE")
-        print("CALLING_REAL_GEMINI=TRUE")
-
-        response = asyncio.run(
-            ask_gemini(log)
-        )
-
-        print(
-            "GEMINI_RESPONSE_RECEIVED=TRUE"
-        )
-
-        try:
-            data = json.loads(response)
-            print(
-                "DIAGNOSIS =",
-                str(data.get("diagnosis", ""))[:1500],
-            )
-        except Exception:
-            print(
-                "GEMINI_JSON_PARSE_WARNING=TRUE"
-            )
-
-        patch = extract_patch(response)
-
-        if not patch:
-            print("PATCH_PRESENT=FALSE")
-            print(
-                "AUTONOMOUS_REPAIR_STOPPED=TRUE"
-            )
-            return False
-
-        print("PATCH_PRESENT=TRUE")
-
-        blocked, path = protected_patch(patch)
-
-        if blocked:
-            print(
-                "PROTECTED_PATH_PATCH=REJECTED"
-            )
-            print("REJECTED_PATH =", path)
-            return False
-
-        check = subprocess.run(
-            [
-                "git",
-                "apply",
-                "--check",
-                "--whitespace=nowarn",
-                "-",
-            ],
-            input=patch,
-            cwd=ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-
-        if check.returncode != 0:
-            print("PATCH_CHECK=FAILED")
-            print(check.stdout[-5000:])
-            return False
-
-        print("PATCH_CHECK=PASSED")
-
-        apply = subprocess.run(
-            [
-                "git",
-                "apply",
-                "--whitespace=nowarn",
-                "-",
-            ],
-            input=patch,
-            cwd=ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-
-        if apply.returncode != 0:
-            print("PATCH_APPLY=FAILED")
-            print(apply.stdout[-5000:])
-            return False
-
-        print("PATCH_APPLY=PASSED")
-
-    print("MAX_REPAIR_ROUNDS_REACHED=TRUE")
-    return False
+    return repair(build_log)
 
 
 if __name__ == "__main__":
-    if "--failure-kind" in sys.argv:
-        i = sys.argv.index("--failure-kind")
-        if i + 1 >= len(sys.argv):
-            raise SystemExit("FAIL-CLOSED: missing failure kind")
-        failure_kind = sys.argv[i + 1]
-        if failure_kind != "runtime":
-            raise SystemExit("FAIL-CLOSED: unsupported failure kind")
-        if "--evidence-file" not in sys.argv:
-            raise SystemExit("FAIL-CLOSED: missing evidence file")
-        j = sys.argv.index("--evidence-file")
-        if j + 1 >= len(sys.argv):
-            raise SystemExit("FAIL-CLOSED: missing evidence path")
-        evidence_file = sys.argv[j + 1]
-        result = asyncio.run(runtime_repair_main(evidence_file))
-        raise SystemExit(0 if result else 2)
-
-    success = main()
-    if not success:
-        print("AI_SUCCESS_CLAIM=FORBIDDEN")
-        raise SystemExit(1)
-    print("AI_SUCCESS_CLAIM=FORBIDDEN")
+    raise SystemExit(main())

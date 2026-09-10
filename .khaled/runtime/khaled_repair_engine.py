@@ -293,8 +293,8 @@ async def ask_gemini(build_log, failure_kind):
         print("GEMINI_SECRET_MISSING=true")
         return ""
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-    provider = load_google_provider()
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    provider = load_google_provider()(api_key=key, model=model)
 
     target = _get_target_file_context(build_log)
 
@@ -328,11 +328,15 @@ CRITICAL:
 """
 
     result = await provider.complete(
-        prompt,
+        [{"role": "user", "content": prompt}],
         max_tokens=12000
     )
 
-    response = getattr(result, "text", None) or str(result)
+    response = (
+        getattr(result, "content", None)
+        or getattr(result, "text", None)
+        or ""
+    )
     print("GEMINI_RESPONSE =", bool(response))
     print("GEMINI_RESPONSE_LENGTH =", len(response))
     return response

@@ -266,7 +266,7 @@ Rules:
         print("GEMINI_ERROR =", str(exc)[:500])
         return ""
 
-def repair(build_log):
+def repair(build_log, failure_kind):
     print("KHALED_REPAIR_START=true")
 
     response = asyncio.run(
@@ -407,7 +407,7 @@ def main():
         print("ERROR: evidence is empty")
         return 13
 
-    return repair(evidence)
+    return repair(evidence, failure_kind)
 
 
 if __name__ == "__main__":

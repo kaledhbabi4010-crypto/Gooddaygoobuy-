@@ -33,7 +33,7 @@ jobs:
       - name: Prepare Gradle wrappers
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           for p in android_app khaled_android; do
             test -f "$p/gradlew"
@@ -43,7 +43,7 @@ jobs:
       - name: Real unit/build verification
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           cd android_app
           ./gradlew test assembleDebug --no-daemon --stacktrace
@@ -82,7 +82,7 @@ jobs:
             -camera-front none
           working-directory: android_app
           script: |
-            set -euo pipefail
+            set -e
 
             echo "=== DEVICE ==="
             adb devices

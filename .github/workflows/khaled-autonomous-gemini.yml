@@ -57,19 +57,42 @@ jobs:
         shell: bash
         run: |
           set -e
+
+          echo "JAVA_HOME=$JAVA_HOME"
+          test -d "$JAVA_HOME"
+          test -x "$JAVA_HOME/bin/java"
+          "$JAVA_HOME/bin/java" -version
+
+          # Remove stale Java-home overrides from repository properties.
+          find . -name gradle.properties -type f -print0 | while IFS= read -r -d '' f; do
+            echo "CHECKING_GRADLE_PROPERTIES=$f"
+            sed -i '/^[[:space:]]*org\.gradle\.java\.home[[:space:]]*=.*/d' "$f"
+          done
+
           for project in android_app khaled_android; do
             echo "GENERATING_WRAPPER=$project"
+
             cd "$project"
+
+            if [ -f gradle.properties ]; then
+              sed -i '/^[[:space:]]*org\.gradle\.java\.home[[:space:]]*=.*/d' gradle.properties
+            fi
+
             if [ ! -f gradlew ]; then
               gradle wrapper --gradle-version 8.7
             fi
+
             chmod +x gradlew
+
             test -f gradlew
             test -f gradle/wrapper/gradle-wrapper.jar
+
             ./gradlew --version
+
             cd ..
           done
-          echo 'GRADLE_WRAPPERS_READY=TRUE'
+
+          echo "GRADLE_WRAPPERS_READY=TRUE"
 
       - name: Setup Python
         uses: actions/setup-python@v5

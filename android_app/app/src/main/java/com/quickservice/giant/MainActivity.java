@@ -1,4 +1,3 @@
-
 package com.quickservice.giant;
 
 import android.graphics.Color;
@@ -133,6 +132,3 @@ public class MainActivity extends AppCompatActivity {
         setContentView(root);
     }
 }
-// KHALED_REAL_REPAIR_CHALLENGE
-THIS_IS_INTENTIONALLY_INVALID_JAVA_SYNTAX
-

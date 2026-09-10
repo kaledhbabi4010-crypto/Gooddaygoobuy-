@@ -329,7 +329,6 @@ CRITICAL:
 
     result = await provider.complete(
         prompt,
-        model=model,
         max_tokens=12000
     )
 

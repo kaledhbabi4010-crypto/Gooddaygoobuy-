@@ -193,6 +193,98 @@ def protected_patch(patch):
     return True
 
 
+def _get_target_file_context(build_log):
+    """
+    Extract real repository files referenced by the build log.
+
+    Handles:
+    - android_app/...
+    - khaled_android/...
+    - absolute paths containing those repository paths
+    - Gradle/Javac error formats
+    """
+
+    text = str(build_log)
+    candidates = set()
+
+    patterns = [
+        r'(?:^|[\s"\'])(android_app/[^\s"\']+\.(?:java|kt|xml))',
+        r'(?:^|[\s"\'])(khaled_android/[^\s"\']+\.(?:java|kt|xml))',
+        r'/(android_app/[^\s"\']+\.(?:java|kt|xml))',
+        r'/(khaled_android/[^\s"\']+\.(?:java|kt|xml))',
+    ]
+
+    for pattern in patterns:
+        for match in re.findall(pattern, text):
+            candidates.add(match)
+
+    # Also inspect ordinary lines containing source-file extensions.
+    for line in text.splitlines():
+        for root in ("android_app/", "khaled_android/"):
+            pos = line.find(root)
+            if pos >= 0:
+                tail = line[pos:].strip()
+
+                # Remove common compiler separators.
+                tail = re.split(r'[\s\'"]', tail, maxsplit=1)[0]
+
+                # Keep only the actual repository-relative path.
+                tail = re.split(r'(?=:\d+(?::\d+)?(?:\s|$))', tail)[0]
+
+                if tail.endswith((".java", ".kt", ".xml")):
+                    candidates.add(tail)
+
+    output = []
+
+    for rel in sorted(candidates):
+        rel = rel.replace("\\", "/")
+
+        # Security boundary: only repository source trees.
+        if not (
+            rel.startswith("android_app/")
+            or rel.startswith("khaled_android/")
+        ):
+            continue
+
+        path = Path(os.getcwd()) / rel
+
+        if not path.is_file():
+            output.append(
+                "===== FILE NOT FOUND: "
+                + rel
+                + " ====="
+            )
+            continue
+
+        try:
+            data = path.read_text(
+                encoding="utf-8",
+                errors="replace"
+            )
+
+            output.append(
+                "===== FILE: "
+                + rel
+                + " =====\n"
+                + data[:50000]
+                + "\n===== END FILE ====="
+            )
+
+        except Exception as exc:
+            output.append(
+                "FILE_READ_ERROR: "
+                + rel
+                + " "
+                + str(exc)
+            )
+
+    if not output:
+        return "NO_TARGET_FILE_FOUND_IN_BUILD_LOG"
+
+    return "\n\n".join(output)
+
+
+
 async def ask_gemini(build_log, failure_kind):
     import hashlib
 
@@ -241,6 +333,9 @@ Rules:
                 cwd=os.getcwd()
             ).stdout[-12000:]
             + "\n\n"
+            "REAL_TARGET_FILE:\n"
+            + _get_target_file_context(build_log)
+            + "\n\n"
             "IMPORTANT: Analyze the actual repository state and the actual build error. "
             "Return a unified git diff that applies to the CURRENT files. "
             "Repair the real error; do not invent file contents."
@@ -283,60 +378,162 @@ Rules:
 def repair(build_log, failure_kind):
     print("KHALED_REPAIR_START=true")
 
+    # --------------------------------------------------------
+    # ATTEMPT 1
+    # --------------------------------------------------------
+    print("GEMINI_REPAIR_ATTEMPT=1")
+
     response = asyncio.run(
         ask_gemini(build_log, failure_kind)
     )
 
     patch = extract_patch(response)
 
-    print(
-        "PATCH_DETECTED=",
-        bool(patch)
-    )
+    print("PATCH_DETECTED=", bool(patch))
 
     if not patch:
-        print("REPAIR_RESULT=NO_PATCH")
-        return 2
+        print("REPAIR_RESULT=NO_PATCH_ATTEMPT_1")
+    else:
+        if not protected_patch(patch):
+            print("REPAIR_RESULT=PROTECTED_PATH_REJECTED")
+            return 3
 
-    if not protected_patch(patch):
-        print("REPAIR_RESULT=PROTECTED_PATH_REJECTED")
-        return 3
+        print("PATCH_VALIDATION_START=true")
+        print("PATCH_VALIDATION_ATTEMPT=1")
 
-    print("PATCH_VALIDATION_START=true")
+        check = run(
+            [
+                "git",
+                "apply",
+                "--check",
+                "--whitespace=nowarn",
+                "-"
+            ],
+            patch
+        )
 
-    check = run(
-        ["git", "apply", "--check", "--whitespace=nowarn", "-"],
-        patch
+        print(
+            "PATCH_CHECK_EXIT_ATTEMPT_1=",
+            check.returncode
+        )
+
+        if check.returncode == 0:
+            apply = run(
+                [
+                    "git",
+                    "apply",
+                    "--whitespace=nowarn",
+                    "-"
+                ],
+                patch
+            )
+
+            print(
+                "PATCH_APPLY_EXIT_ATTEMPT_1=",
+                apply.returncode
+            )
+
+            if apply.returncode == 0:
+                print("PATCH_APPLIED=true")
+                print("REPAIR_RESULT=PATCH_APPLIED")
+                return 0
+
+            print("PATCH_APPLY_FAILED_ATTEMPT_1=true")
+
+        else:
+            print("PATCH_CHECK_FAILED_ATTEMPT_1=true")
+            print(check.stdout[-10000:])
+
+    # --------------------------------------------------------
+    # ATTEMPT 2
+    # Send Gemini the REAL current file context again,
+    # plus the rejected patch and git error.
+    # No patch has been applied if validation failed.
+    # --------------------------------------------------------
+    print("=" * 60)
+    print("GEMINI_REPAIR_RETRY=true")
+    print("=" * 60)
+
+    retry_evidence = (
+        str(build_log)
+        + "\n\n"
+        "KHALED_FIRST_ATTEMPT_RESULT:\n"
+        + str(response)
+        + "\n\n"
+        "IMPORTANT_PATCH_RETRY:\n"
+        "The previous Gemini patch was NOT applied.\n"
+        "It failed KHALED git apply validation.\n"
+        "Generate a NEW unified diff against the CURRENT "
+        "REAL FILE CONTENT.\n"
+        "Do not reuse line numbers blindly.\n"
+        "The file content supplied by KHALED is authoritative.\n"
+    )
+
+    response2 = asyncio.run(
+        ask_gemini(retry_evidence, failure_kind)
+    )
+
+    patch2 = extract_patch(response2)
+
+    print("GEMINI_RETRY_RESPONSE =", bool(response2))
+    print("PATCH_DETECTED_ATTEMPT_2 =", bool(patch2))
+
+    if not patch2:
+        print("REPAIR_RESULT=NO_PATCH_ATTEMPT_2")
+        return 6
+
+    if not protected_patch(patch2):
+        print("REPAIR_RESULT=PROTECTED_PATH_REJECTED_ATTEMPT_2")
+        return 7
+
+    print("PATCH_VALIDATION_ATTEMPT=2")
+
+    check2 = run(
+        [
+            "git",
+            "apply",
+            "--check",
+            "--whitespace=nowarn",
+            "-"
+        ],
+        patch2
     )
 
     print(
-        "PATCH_CHECK_EXIT=",
-        check.returncode
+        "PATCH_CHECK_EXIT_ATTEMPT_2=",
+        check2.returncode
     )
 
-    if check.returncode != 0:
-        print("PATCH_CHECK_FAILED=true")
-        print(check.stdout[-10000:])
-        return 4
+    if check2.returncode != 0:
+        print("PATCH_CHECK_FAILED_ATTEMPT_2=true")
+        print(check2.stdout[-12000:])
+        print("REPAIR_RESULT=FAILED_AFTER_RETRY")
+        return 8
 
-    apply = run(
-        ["git", "apply", "--whitespace=nowarn", "-"],
-        patch
+    apply2 = run(
+        [
+            "git",
+            "apply",
+            "--whitespace=nowarn",
+            "-"
+        ],
+        patch2
     )
 
     print(
-        "PATCH_APPLY_EXIT=",
-        apply.returncode
+        "PATCH_APPLY_EXIT_ATTEMPT_2=",
+        apply2.returncode
     )
 
-    if apply.returncode != 0:
-        print("PATCH_APPLY_FAILED=true")
-        print(apply.stdout[-10000:])
-        return 5
+    if apply2.returncode != 0:
+        print("PATCH_APPLY_FAILED_ATTEMPT_2=true")
+        print(apply2.stdout[-12000:])
+        return 9
 
     print("PATCH_APPLIED=true")
-    print("REPAIR_RESULT=PATCH_APPLIED")
+    print("REPAIR_RESULT=PATCH_APPLIED_ON_RETRY")
     return 0
+
 
 
 

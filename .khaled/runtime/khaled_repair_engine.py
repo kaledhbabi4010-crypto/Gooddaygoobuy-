@@ -293,17 +293,8 @@ async def ask_gemini(build_log, failure_kind):
         print("GEMINI_SECRET_MISSING=true")
         return ""
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
-    allowed = (
-        "gemini-2.0-flash",
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-    )
-    if model not in allowed:
-        print("GEMINI_MODEL_OVERRIDE=", model, "->gemini-2.5-flash")
-        model = "gemini-2.5-flash"
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash").strip()
+    print("GEMINI_MODEL_USED=", model)
     provider = load_google_provider()(api_key=key, model=model)
 
     target = _get_target_file_context(build_log)
@@ -358,10 +349,17 @@ def repair(build_log, failure_kind):
 
     print("KHALED_DIRECT_FILE_REPAIR=true")
 
-    tail = "\n".join(str(build_log).splitlines()[-150:])
-    print("----- REAL BUILD LOG TAIL -----")
-    print(tail)
-    print("----- END REAL BUILD LOG TAIL -----")
+    lines = str(build_log).splitlines()
+    summary = [
+        ln for ln in lines
+        if ("error:" in ln or "e: " in ln[:3] or "FAILURE:" in ln
+            or "What went wrong" in ln or "Execution failed" in ln
+            or "Caused by:" in ln or "> " == ln[:2])
+    ]
+    print("----- REAL BUILD ERROR SUMMARY -----")
+    for ln in summary[:120]:
+        print(ln)
+    print("----- END REAL BUILD ERROR SUMMARY -----")
 
     context = _get_target_file_context(build_log)
 

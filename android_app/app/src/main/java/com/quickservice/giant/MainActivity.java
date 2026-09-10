@@ -133,6 +133,6 @@ public class MainActivity extends AppCompatActivity {
         setContentView(root);
     }
 }
-
 // KHALED_REAL_REPAIR_CHALLENGE
-this_is_a_real_khaled_build_failure;
+THIS_IS_INTENTIONALLY_INVALID_JAVA_SYNTAX
+

@@ -1,4 +1,3 @@
-
 package com.quickservice.giant;
 
 import android.graphics.Color;

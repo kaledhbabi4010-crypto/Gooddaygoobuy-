@@ -118,7 +118,40 @@ jobs:
         env:
           PYTHONPATH: .khaled/ai-code-reviewer
         run: |
-          python .khaled/runtime/khaled_repair_engine.py
+          set +e
+
+          BUILD_LOG=build.log
+
+          cd android_app
+          ./gradlew --no-daemon assembleDebug --stacktrace > ../$BUILD_LOG 2>&1
+          BUILD_RC=$?
+          cd ..
+
+          echo "REAL_BUILD_EXIT=$BUILD_RC"
+          echo "BUILD_LOG_BYTES=$(wc -c < $BUILD_LOG)"
+
+          if [ "$BUILD_RC" -eq 0 ]; then
+            echo "REAL_BUILD_RESULT=SUCCESS"
+            echo "KHALED_REPAIR_NEEDED=false"
+            exit 0
+          fi
+
+          echo "REAL_BUILD_RESULT=FAILURE"
+          echo "KHALED_REPAIR_NEEDED=true"
+          echo "CALLING_REAL_KHALED_REPAIR=true"
+
+          python .khaled/runtime/khaled_repair_engine.py             --failure-kind build             --build-log "$BUILD_LOG"
+
+          REPAIR_RC=$?
+
+          echo "KHALED_REPAIR_EXIT=$REPAIR_RC"
+
+          if [ "$REPAIR_RC" -ne 0 ]; then
+            echo "KHALED_REPAIR_RESULT=FAILED"
+            exit "$REPAIR_RC"
+          fi
+
+          echo "KHALED_REPAIR_RESULT=PATCH_APPLIED"
 
       - name: Final real build gate
         shell: bash

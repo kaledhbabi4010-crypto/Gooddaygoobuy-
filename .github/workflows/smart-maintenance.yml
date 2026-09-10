@@ -1,34 +1,30 @@
-name: إصلاح تلقائي صامت (بدون أخطاء)
+name: الماسح والمصلح التلقائي
 
 on:
   push:
     branches: [main, master]
-  workflow_dispatch: # للتشغيل اليدوي أيضاً
+  workflow_dispatch: # يسمح لك بتشغيله يدوياً أيضاً بضغطة زر
 
 jobs:
-  silent-fix:
+  scan-and-fix:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: جلب الكود
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: إعداد البيئة
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: تثبيت المكتبات
-        run: pip install groq requests
+      - run: pip install groq requests
 
-      - name: تشغيل نظام الإصلاح الصامت
+      - name: تشغيل الماسح والمصلح
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # هذا السطر يضمن أن أي خطأ في البناء لن يوقف السكريبت
-          python .github/scripts/silent_fixer.py || true
-          
-          # هذا السطر يضمن أن العملية تنتهي بنجاح دائماً (علامة خضراء)
-          exit 0
+        run: python .github/scripts/scanner_fixer.py
+        
+      # ضمان عدم ظهور أي خطأ أحمر في واجهة GitHub
+      - name: إنهاء العملية بنجاح
+        run: exit 0

@@ -1,8 +1,10 @@
 name: AI Code Reviewer Multi-LLM
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - khaled-gemini-direct-fix
+  workflow_dispatch:
 
 permissions:
   contents: write

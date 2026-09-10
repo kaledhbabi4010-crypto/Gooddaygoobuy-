@@ -65,39 +65,34 @@ def protected_patch(patch):
     return False, ""
 
 
+
 def extract_patch(response):
     if not response:
         return ""
 
-    response = response.strip()
+    text = str(response).strip()
 
-    try:
-        data = json.loads(response)
+    if text == "NO_SAFE_PATCH":
+        return ""
 
-        patch = data.get("patch", "")
+    # إزالة Markdown fences
+    text = re.sub(r"```(?:diff|patch)?\s*", "", text,
+                  flags=re.IGNORECASE)
+    text = text.replace("```", "")
 
-        if isinstance(patch, str):
-            return patch.strip()
+    # Git unified diff
+    pos = text.find("diff --git ")
+    if pos >= 0:
+        return text[pos:].strip()
 
-    except Exception:
-        pass
-
-    match = re.search(
-        r"```(?:diff|patch)?\s*(.*?)```",
-        response,
-        re.DOTALL | re.IGNORECASE,
-    )
-
-    if match:
-        return match.group(1).strip()
-
-    if "diff --git " in response:
-        return response[
-            response.index("diff --git "):
-        ].strip()
+    # Standard unified diff
+    pos = text.find("--- ")
+    if pos >= 0:
+        candidate = text[pos:].strip()
+        if "\n+++ " in candidate:
+            return candidate
 
     return ""
-
 
 def collect_source():
     result = []

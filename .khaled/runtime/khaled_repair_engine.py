@@ -36,6 +36,83 @@ if str(REVIEWER) not in sys.path:
 
 GoogleProvider = None
 
+
+# ============================================================
+# _KHALED_GEMINI_RETRY_ENGINE
+# REAL GEMINI RETRY FOR TEMPORARY API FAILURES
+# ============================================================
+
+def _khaled_gemini_retry(provider, *args, **kwargs):
+
+    max_attempts = 5
+    delays = [3, 8, 15, 30, 45]
+
+    for attempt in range(1, max_attempts + 1):
+
+        print("GEMINI_API_ATTEMPT=" + str(attempt))
+
+        try:
+
+            result = provider.complete(
+                *args,
+                **kwargs
+            )
+
+            if result is None:
+                raise RuntimeError(
+                    "Gemini returned no response"
+                )
+
+            print("GEMINI_API_CALL=SUCCESS")
+            print(
+                "GEMINI_RESPONSE_LENGTH="
+                + str(len(str(result)))
+            )
+
+            return result
+
+        except Exception as exc:
+
+            error = str(exc)
+
+            print(
+                "GEMINI_API_ERROR="
+                + error[:2000]
+            )
+
+            transient = (
+                "503" in error
+                or "UNAVAILABLE" in error
+                or "429" in error
+                or "RESOURCE_EXHAUSTED" in error
+                or "500" in error
+                or "502" in error
+                or "504" in error
+            )
+
+            if not transient:
+                raise
+
+            if attempt >= max_attempts:
+                print(
+                    "GEMINI_RETRY_EXHAUSTED=TRUE"
+                )
+                raise
+
+            wait_time = delays[attempt - 1]
+
+            print(
+                "GEMINI_RETRY_WAIT="
+                + str(wait_time)
+            )
+
+            import time
+            time.sleep(wait_time)
+
+
+_KHALED_GEMINI_RETRY_ENGINE = True
+
+
 def load_google_provider():
     global GoogleProvider
 
@@ -328,7 +405,7 @@ CRITICAL:
 - Do not use Markdown fences.
 """
 
-    result = await provider.complete(
+    result = await _khaled_gemini_retry(provider, 
         [{"role": "user", "content": prompt}],
         max_tokens=12000
     )

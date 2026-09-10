@@ -1,0 +1,73 @@
+name: KHALED - Gemini Direct Repair
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+  checks: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: khaled-gemini-direct-fix
+          fetch-depth: 0
+
+      - name: Gemini Direct Repair
+        uses: google-github-actions/run-gemini-cli@v0
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          settings: |
+            {
+              "general": {
+                "defaultApprovalMode": "yolo"
+              }
+            }
+          prompt: |
+            DIRECT EXECUTION ONLY.
+
+            Do not make a plan.
+            Do not only analyze.
+            Do not ask for permission.
+
+            Work ONLY on branch khaled-gemini-direct-fix.
+
+            NEVER modify main.
+            NEVER modify khaled-repair-v6.
+
+            Use khaled-repair-v6 as the known healthy baseline.
+
+            Inspect the actual repository and actual failures.
+
+            Fix the existing files directly.
+
+            Run the real build and tests.
+
+            If they fail, inspect the real error,
+            fix the cause, and run them again.
+
+            Continue EDIT -> BUILD -> TEST -> FIX.
+
+            Do not create a replacement project.
+            Do not modify unrelated files.
+            Do not commit untracked generated build logs.
+
+            Do not claim success without real execution evidence.
+
+            At the end run:
+            git status --short
+            git diff --check
+            git diff --stat
+
+            Commit the actual repair to this branch only.
+
+            EXECUTE NOW.

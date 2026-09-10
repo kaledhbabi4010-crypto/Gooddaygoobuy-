@@ -1,10 +1,9 @@
-name: KHALED - Gemini Direct Repair
+name: KHALED DIRECT GEMINI REPAIR
 
 on:
   push:
     branches:
       - khaled-gemini-direct-fix
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,68 +16,75 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - name: Checkout
+
+      - name: Checkout V6 repair branch
         uses: actions/checkout@v4
         with:
           ref: khaled-gemini-direct-fix
           fetch-depth: 0
 
-      - name: Gemini Direct Repair
+      - name: Gemini
         uses: google-github-actions/run-gemini-cli@v0
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          settings: |
-            {
-              "general": {
-                "defaultApprovalMode": "yolo"
-              }
-            }
-          prompt: |
-            DIRECT EXECUTION ONLY.
 
-            Work ONLY on:
+          prompt: |
+            EXECUTE DIRECTLY.
+
+            You are repairing the real repository.
+
+            CURRENT BRANCH:
             khaled-gemini-direct-fix
 
-            NEVER modify:
+            PROTECTED:
             main
             khaled-repair-v6
 
-            Known healthy baseline:
+            BASELINE:
             khaled-repair-v6
             c87edb18335e5869ed2278e1ecf18ee579c4cc6e
 
-            Inspect the actual repository.
+            Do not modify main.
+            Do not modify khaled-repair-v6.
+            Do not create a replacement project.
+            Do not merely explain.
+            Do not ask permission.
 
-            Find the actual current build/test failures.
+            Inspect the real repository.
 
-            Fix the existing code directly.
+            Find the actual current failures.
 
-            Do NOT create a replacement project.
+            Fix the existing source/workflow files directly.
 
-            Do NOT make a plan for the user.
-            Do NOT ask for permission.
-            EXECUTE THE REPAIR.
+            Run the real build.
 
-            Run real builds.
-            Run real tests.
-            Read real error output.
+            Run the real tests that are available.
 
-            If a build/test fails:
-              inspect the actual error,
-              fix the cause,
-              run again.
+            Read the actual errors.
 
-            Continue:
-            INSPECT -> EDIT -> BUILD -> TEST -> FIX
+            Fix them.
 
-            Do not fabricate results.
+            Build again.
 
-            Do not claim success without real execution evidence.
+            Test again.
 
-            Check for untracked generated files such as build.log.
-            Do not commit unnecessary generated logs.
+            Continue until the actual failure is fixed
+            or until a genuine external limitation prevents it.
+
+            Pay particular attention to:
+            - .github/workflows
+            - Android build configuration
+            - Gradle
+            - existing Gemini workflows
+            - KHALED runtime
+            - repair engine
+            - existing tests
+            - build.log handling
+            - actual compiler errors
+
+            Do not fabricate success.
 
             Before finishing run:
 
@@ -86,7 +92,7 @@ jobs:
             git diff --check
             git diff --stat
 
-            Commit the actual repair.
+            Commit only actual repair changes.
 
             Push ONLY to:
             khaled-gemini-direct-fix

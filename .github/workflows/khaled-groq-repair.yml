@@ -1,6 +1,9 @@
 name: KHALED GROQ TARGETED SELF-REPAIR
 
 on:
+  push:
+    branches:
+      - khaled-gemini-direct-fix
   workflow_dispatch:
 
 permissions:

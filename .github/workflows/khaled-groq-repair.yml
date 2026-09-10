@@ -1,10 +1,10 @@
 name: KHALED GROQ REAL REPAIR
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - khaled-gemini-direct-fix
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,137 +15,209 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      REPO: ${{ github.repository }}
+      BRANCH: khaled-gemini-direct-fix
+
     steps:
-      - name: Checkout
+      - name: Checkout repair branch
         uses: actions/checkout@v4
         with:
           ref: khaled-gemini-direct-fix
           fetch-depth: 0
 
-      - name: Install tools
-        run: |
-          python -m pip install --upgrade pip requests
+      - name: Install dependencies
+        run: python -m pip install requests
 
       - name: Groq autonomous repair
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
+        shell: bash
         run: |
-          cat > /tmp/khaled_repair.py <<'PY'
-          import os, subprocess, requests, json, re, pathlib, sys
+          cat > /tmp/khaled_groq.py <<'PY'
+          import os, subprocess, pathlib, requests, json, re, sys
 
           KEY=os.environ["GROQ_API_KEY"]
-          REPO=os.environ["REPO"]
           BRANCH="khaled-gemini-direct-fix"
+          MODEL="openai/gpt-oss-120b"
 
-          def sh(cmd):
-              p=subprocess.run(cmd,shell=True,text=True,
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT)
-              return p.returncode,p.stdout[-12000:]
+          def run(cmd, timeout=600):
+              try:
+                  p=subprocess.run(
+                      cmd,
+                      shell=True,
+                      text=True,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.STDOUT,
+                      timeout=timeout
+                  )
+                  return p.returncode,p.stdout[-30000:]
+              except Exception as e:
+                  return 999,str(e)
 
-          # Real repository inventory
-          _,tree=sh(
-              "git ls-files | grep -v '^\\.git/' | "
-              "grep -Ev '(^|/)(bin|obj|node_modules|\\.gradle)/' | head -n 400"
+          print("="*70)
+          print("KHALED / GROQ AUTONOMOUS REAL REPAIR")
+          print("MODEL:",MODEL)
+          print("BRANCH:",BRANCH)
+          print("="*70)
+
+          # Never touch main or V6
+          code,_=run("git branch --show-current")
+          if _.strip()!=BRANCH:
+              print("WRONG BRANCH - STOP")
+              sys.exit(1)
+
+          # Baseline reference
+          run("git fetch origin khaled-repair-v6 khaled-gemini-direct-fix")
+
+          # Inventory
+          _,files=run(
+              "git ls-files | "
+              "grep -Ev '(^|/)(bin|obj|node_modules|\\.gradle|\\.git)/' | "
+              "head -n 500"
           )
 
-          # Real status/build clues
-          _,status=sh("git status --short")
-          _,dotnet=sh("find . -name '*.sln' -o -name '*.csproj' | head -50")
-          _,gradle=sh("find . -maxdepth 4 -name 'gradlew' -o -name 'build.gradle*' | head -50")
+          paths=[x.strip() for x in files.splitlines() if x.strip()]
 
-          context=f"""
-          REPOSITORY: {REPO}
-          BRANCH: {BRANCH}
+          # Read real source/config files, bounded per file
+          extensions={
+              ".cs",".csproj",".sln",".java",".kt",".gradle",".xml",
+              ".json",".yml",".yaml",".props",".targets",".txt",
+              ".md",".sh",".ps1",".py",".js",".ts",".tsx",".jsx"
+          }
 
-          FILES:
-          {tree}
+          chunks=[]
+          total=0
+          MAX_TOTAL=90000
+          MAX_FILE=12000
 
-          GIT STATUS:
-          {status}
+          for p in paths:
+              pp=pathlib.Path(p)
+              if pp.suffix.lower() not in extensions:
+                  continue
+              try:
+                  data=pp.read_text(errors="ignore")
+              except:
+                  continue
+              if not data.strip():
+                  continue
 
-          DOTNET PROJECTS:
-          {dotnet}
+              data=data[:MAX_FILE]
+              block=f"\n===== FILE: {p} =====\n{data}\n"
+              if total+len(block)>MAX_TOTAL:
+                  break
+              chunks.append(block)
+              total+=len(block)
 
-          ANDROID/GRADLE:
-          {gradle}
-          """
+          source="".join(chunks)
+
+          print("FILES:",len(paths))
+          print("SOURCE_CONTEXT_CHARS:",len(source))
+
+          # First get an actual build/test result before asking for repair.
+          build_commands=[]
+
+          slns=list(pathlib.Path(".").rglob("*.sln"))
+          csprojs=list(pathlib.Path(".").rglob("*.csproj"))
+          gradlew=list(pathlib.Path(".").rglob("gradlew"))
+
+          if slns or csprojs:
+              build_commands=[
+                  "dotnet restore",
+                  "dotnet build --no-restore"
+              ]
+          elif gradlew:
+              build_commands=[
+                  "chmod +x $(find . -name gradlew | head -1)",
+                  "$(find . -name gradlew | head -1) test"
+              ]
+
+          evidence=[]
+
+          for cmd in build_commands:
+              print("REAL TEST:",cmd)
+              rc,out=run(cmd,timeout=900)
+              evidence.append(
+                  f"COMMAND: {cmd}\nEXIT: {rc}\nOUTPUT:\n{out}"
+              )
+              if rc!=0:
+                  break
+
+          test_evidence="\n\n".join(evidence)
+
+          system="""You are KHALED's autonomous software repair engineer.
+          You must perform REAL repository maintenance.
+          Never invent files, errors, tests, APIs, or results.
+          Work only from the supplied repository contents and real command output.
+          Return a unified git diff only.
+          Do not redesign or replace the project.
+          Preserve existing architecture.
+          Fix the actual demonstrated failure first.
+          If evidence is insufficient, return an empty diff."""
 
           prompt=f"""
-          You are the REAL repair engineer for this repository.
+          REPOSITORY: {os.environ.get("REPO")}
+          WORK BRANCH: {BRANCH}
+          BASELINE: khaled-repair-v6
+          BASELINE SHA: c87edb18335e5869ed2278e1ecf18ee579c4cc6e
 
-          Work ONLY on branch {BRANCH}.
-          NEVER modify main or khaled-repair-v6.
+          IMPORTANT:
+          - NEVER modify main.
+          - NEVER modify khaled-repair-v6.
+          - Modify only the current repair branch.
+          - Do not fabricate success.
+          - Do not create a replacement project.
+          - Repair existing implementation.
 
-          Baseline is:
-          khaled-repair-v6
-          c87edb18335e5869ed2278e1ecf18ee579c4cc6e
+          REAL FILE INVENTORY:
+          {files}
 
-          Your task is actual maintenance, NOT code review.
+          REAL SOURCE/CONFIG CONTENT:
+          {source}
 
-          First determine the real project structure and likely broken implementation.
-          Focus on existing code. Do NOT create a replacement project.
+          REAL BUILD/TEST EVIDENCE:
+          {test_evidence}
 
-          You must return a SINGLE unified git diff.
-          The diff must contain only real source/config/test changes required
-          to repair the project.
-
-          Do not fabricate test results.
-          Do not claim success without evidence.
-          Do not modify generated logs/artifacts.
-
-          Repository information:
-          {context}
+          Determine the actual failure from the evidence.
+          Produce the smallest safe repair that addresses it.
 
           Return ONLY:
           ```diff
-          <unified diff>
+          <unified git diff>
           ```
-
-          If there is not enough evidence for a safe source change,
-          return an empty diff.
           """
 
-          url="https://api.groq.com/openai/v1/chat/completions"
+          def ask(prompt):
+              r=requests.post(
+                  "https://api.groq.com/openai/v1/chat/completions",
+                  headers={
+                      "Authorization":"Bearer "+KEY,
+                      "Content-Type":"application/json"
+                  },
+                  json={
+                      "model":MODEL,
+                      "messages":[
+                          {"role":"system","content":system},
+                          {"role":"user","content":prompt}
+                      ],
+                      "temperature":0.05,
+                      "max_tokens":30000
+                  },
+                  timeout=300
+              )
+              print("GROQ HTTP:",r.status_code)
+              if r.status_code!=200:
+                  print(r.text[:5000])
+                  sys.exit(1)
+              return r.json()["choices"][0]["message"]["content"]
 
-          data={
-            "model":"openai/gpt-oss-120b",
-            "messages":[
-              {
-                "role":"system",
-                "content":
-                "You are a precise software repair engineer. "
-                "Never invent repository facts."
-              },
-              {"role":"user","content":prompt}
-            ],
-            "temperature":0.1,
-            "max_tokens":16000
-          }
-
-          r=requests.post(
-              url,
-              headers={
-                "Authorization":f"Bearer {KEY}",
-                "Content-Type":"application/json"
-              },
-              json=data,
-              timeout=180
-          )
-
-          if r.status_code != 200:
-              print(r.text)
-              sys.exit(1)
-
-          answer=r.json()["choices"][0]["message"]["content"]
+          answer=ask(prompt)
 
           m=re.search(r"```diff\s*(.*?)```",answer,re.S)
+
           if not m:
-              print("NO VALID PATCH RETURNED")
+              print("NO PATCH RETURNED")
               print(answer[-5000:])
-              sys.exit(0)
+              sys.exit(1)
 
           patch=m.group(1).strip()
 
@@ -155,65 +227,103 @@ jobs:
 
           pathlib.Path("/tmp/repair.patch").write_text(patch)
 
-          code,out=sh("git apply --check /tmp/repair.patch")
-          if code != 0:
-              print("PATCH CHECK FAILED")
-              print(out)
+          rc,out=run("git apply --check /tmp/repair.patch")
+          print("PATCH CHECK:",rc)
+          print(out)
+
+          if rc!=0:
+              print("PATCH REJECTED")
               sys.exit(1)
 
-          code,out=sh("git apply /tmp/repair.patch")
-          if code != 0:
-              print("PATCH APPLY FAILED")
-              print(out)
+          rc,out=run("git apply /tmp/repair.patch")
+          print("PATCH APPLY:",rc)
+          print(out)
+
+          if rc!=0:
               sys.exit(1)
 
           print("REAL PATCH APPLIED")
-          print(sh("git diff --stat")[1])
-          print(sh("git diff --check")[1])
-
-          # Detect and run real builds/tests where possible
-          if pathlib.Path("*.sln").exists() or list(pathlib.Path(".").rglob("*.sln")):
-              print("RUNNING REAL DOTNET BUILD")
-              code,out=sh("dotnet build --no-restore 2>&1")
-              print(out)
-          elif list(pathlib.Path(".").rglob("gradlew")):
-              print("RUNNING REAL GRADLE TEST")
-              code,out=sh(
-                  "chmod +x $(find . -name gradlew | head -1) && "
-                  "$(find . -name gradlew | head -1) test 2>&1"
-              )
-              print(out)
-          else:
-              print("NO STANDARD BUILD SYSTEM DETECTED")
-
-          # Commit only actual source changes
-          sh("git config user.name 'KHALED-GROQ-REPAIR'")
-          sh("git config user.email '41898282+github-actions[bot]@users.noreply.github.com'")
-
-          code,out=sh("git status --short")
-          print("FINAL STATUS")
+          rc,out=run("git diff --check")
+          print("DIFF CHECK:",rc)
           print(out)
 
-          if out.strip():
-              code,out=sh(
-                  "git add -A && "
-                  "git reset -- '*.log' '*.tmp' 2>/dev/null || true && "
-                  "git status --short"
+          # Re-run real build/test after repair
+          final=[]
+          for cmd in build_commands:
+              print("POST-REPAIR TEST:",cmd)
+              rc,out=run(cmd,timeout=900)
+              final.append(
+                  f"COMMAND: {cmd}\nEXIT: {rc}\nOUTPUT:\n{out}"
               )
               print(out)
+              if rc!=0:
+                  break
 
-              code,out=sh(
-                  "git commit -m 'KHALED: Groq real repair'"
-              )
-              print(out)
+          # If still failing, give Groq the actual new failure and allow one repair iteration.
+          if final and final[-1].split("EXIT:")[-1].split("\n")[0].strip()!="0":
+              failure="\n\n".join(final)
 
-              if code == 0:
-                  code,out=sh(
-                      "git push origin khaled-gemini-direct-fix"
-                  )
+              retry_prompt=f"""
+              The previous repair was applied, but the REAL post-repair build/test
+              still failed.
+
+              EXISTING SOURCE CONTEXT:
+              {source}
+
+              NEW REAL FAILURE:
+              {failure}
+
+              Return ONLY a unified git diff that fixes this demonstrated failure.
+              Do not invent evidence.
+              Do not redesign the project.
+              """
+
+              answer=ask(retry_prompt)
+              m=re.search(r"```diff\s*(.*?)```",answer,re.S)
+
+              if m and m.group(1).strip():
+                  pathlib.Path("/tmp/repair2.patch").write_text(m.group(1).strip())
+
+                  rc,out=run("git apply --check /tmp/repair2.patch")
+                  print("SECOND PATCH CHECK:",rc)
                   print(out)
 
-          print("GROQ REPAIR EXECUTION FINISHED")
+                  if rc==0:
+                      rc,out=run("git apply /tmp/repair2.patch")
+                      print("SECOND PATCH APPLY:",rc)
+                      print(out)
+
+                      if rc==0:
+                          for cmd in build_commands:
+                              print("FINAL REAL TEST:",cmd)
+                              rc,out=run(cmd,timeout=900)
+                              print(out)
+
+          print("="*70)
+          print("FINAL GIT STATUS")
+          print("="*70)
+          print(run("git status --short")[1])
+          print(run("git diff --stat")[1])
+
+          # Commit only actual changes.
+          rc,status=run("git status --short")
+
+          if status.strip():
+              run("git config user.name 'KHALED-GROQ-REPAIR'")
+              run("git config user.email '41898282+github-actions[bot]@users.noreply.github.com'")
+
+              rc,out=run("git add -A")
+              print(out)
+
+              rc,out=run("git commit -m 'KHALED: Groq autonomous real repair'")
+              print(out)
+
+              if rc==0:
+                  rc,out=run("git push origin khaled-gemini-direct-fix",timeout=600)
+                  print("PUSH EXIT:",rc)
+                  print(out)
+
+          print("KHALED GROQ REAL REPAIR FINISHED")
           PY
 
-          python /tmp/khaled_repair.py
+          python /tmp/khaled_groq.py

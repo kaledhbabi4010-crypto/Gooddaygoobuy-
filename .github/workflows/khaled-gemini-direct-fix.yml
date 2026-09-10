@@ -1,6 +1,9 @@
 name: KHALED - Gemini Direct Repair
 
 on:
+  push:
+    branches:
+      - khaled-gemini-direct-fix
   workflow_dispatch:
 
 permissions:
@@ -35,39 +38,57 @@ jobs:
           prompt: |
             DIRECT EXECUTION ONLY.
 
-            Do not make a plan.
-            Do not only analyze.
-            Do not ask for permission.
+            Work ONLY on:
+            khaled-gemini-direct-fix
 
-            Work ONLY on branch khaled-gemini-direct-fix.
+            NEVER modify:
+            main
+            khaled-repair-v6
 
-            NEVER modify main.
-            NEVER modify khaled-repair-v6.
+            Known healthy baseline:
+            khaled-repair-v6
+            c87edb18335e5869ed2278e1ecf18ee579c4cc6e
 
-            Use khaled-repair-v6 as the known healthy baseline.
+            Inspect the actual repository.
 
-            Inspect the actual repository and actual failures.
+            Find the actual current build/test failures.
 
-            Fix the existing files directly.
+            Fix the existing code directly.
 
-            Run the real build and tests.
+            Do NOT create a replacement project.
 
-            If they fail, inspect the real error,
-            fix the cause, and run them again.
+            Do NOT make a plan for the user.
+            Do NOT ask for permission.
+            EXECUTE THE REPAIR.
 
-            Continue EDIT -> BUILD -> TEST -> FIX.
+            Run real builds.
+            Run real tests.
+            Read real error output.
 
-            Do not create a replacement project.
-            Do not modify unrelated files.
-            Do not commit untracked generated build logs.
+            If a build/test fails:
+              inspect the actual error,
+              fix the cause,
+              run again.
+
+            Continue:
+            INSPECT -> EDIT -> BUILD -> TEST -> FIX
+
+            Do not fabricate results.
 
             Do not claim success without real execution evidence.
 
-            At the end run:
+            Check for untracked generated files such as build.log.
+            Do not commit unnecessary generated logs.
+
+            Before finishing run:
+
             git status --short
             git diff --check
             git diff --stat
 
-            Commit the actual repair to this branch only.
+            Commit the actual repair.
+
+            Push ONLY to:
+            khaled-gemini-direct-fix
 
             EXECUTE NOW.

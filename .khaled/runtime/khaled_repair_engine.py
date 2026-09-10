@@ -16,6 +16,8 @@ No broad file rewriting.
 """
 
 import os
+import pathlib
+import subprocess
 import sys
 import re
 import json
@@ -230,6 +232,18 @@ Rules:
             + "\n\n"
             "REAL_BUILD_EVIDENCE:\n"
             + str(build_log)
+            + "\n\n"
+            "REAL_REPOSITORY_STATUS:\n"
+            + subprocess.run(
+                ["git", "status", "--short"],
+                capture_output=True,
+                text=True,
+                cwd=os.getcwd()
+            ).stdout[-12000:]
+            + "\n\n"
+            "IMPORTANT: Analyze the actual repository state and the actual build error. "
+            "Return a unified git diff that applies to the CURRENT files. "
+            "Repair the real error; do not invent file contents."
         )
 
         result = await provider.complete(

@@ -1,4 +1,5 @@
 name: GQS - Gemini Real Android AI
+# KHALED_MANUAL_EXECUTION_TRIGGER
 
 on:
   workflow_dispatch:

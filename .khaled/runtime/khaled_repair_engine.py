@@ -285,254 +285,134 @@ def _get_target_file_context(build_log):
 
 
 
+
 async def ask_gemini(build_log, failure_kind):
-    import hashlib
-
-    key = os.environ.get("GOOGLE_API_KEY", "").strip()
-
+    import os
+    key = os.environ.get("GOOGLE_API_KEY")
     if not key:
-        print("GEMINI_RESPONSE = False")
-        print("GEMINI_ERROR = GOOGLE_API_KEY_MISSING")
+        print("GEMINI_SECRET_MISSING=true")
         return ""
 
     model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+    provider = load_google_provider()
 
-    try:
-        provider_class = load_google_provider()
-        provider = provider_class(
-            api_key=key,
-            model=model
-        )
+    target = _get_target_file_context(build_log)
 
-        system = """You are the KHALED autonomous repair engine.
+    prompt = f"""
+You are KHALED's REAL CODE REPAIR ENGINE.
 
-Return ONLY a valid unified git diff.
+A REAL build failed.
 
-Rules:
-1. Repair only the actual build failure shown in the evidence.
-2. Make the smallest safe change possible.
-3. Never modify .github/, .khaled/, .git/, gradle/wrapper/, gradlew, or gradlew.bat.
-4. Never invent test results.
-5. Never return explanations.
-6. The diff must contain valid --- / +++ headers and @@ hunks.
-7. If no safe repair can be produced, return exactly NO_SAFE_PATCH.
+FAILURE KIND:
+{failure_kind}
+
+REAL BUILD EVIDENCE:
+{build_log}
+
+REAL CURRENT TARGET FILE:
+{target}
+
+TASK:
+Repair the actual compiler error in the supplied current file.
+
+CRITICAL:
+- The supplied file content is authoritative.
+- Do NOT use guessed line numbers.
+- Do NOT return a unified diff.
+- Return ONLY the COMPLETE corrected contents of the target source file.
+- Preserve all existing valid code.
+- Make the smallest necessary correction.
+- Do not modify unrelated files.
+- Do not add explanations.
+- Do not use Markdown fences.
 """
 
-        user = (
-            "FAILURE_KIND:\n"
-            + str(failure_kind)
-            + "\n\n"
-            "REAL_BUILD_EVIDENCE:\n"
-            + str(build_log)
-            + "\n\n"
-            "REAL_REPOSITORY_STATUS:\n"
-            + subprocess.run(
-                ["git", "status", "--short"],
-                capture_output=True,
-                text=True,
-                cwd=os.getcwd()
-            ).stdout[-12000:]
-            + "\n\n"
-            "REAL_TARGET_FILE:\n"
-            + _get_target_file_context(build_log)
-            + "\n\n"
-            "IMPORTANT: Analyze the actual repository state and the actual build error. "
-            "Return a unified git diff that applies to the CURRENT files. "
-            "Repair the real error; do not invent file contents."
-        )
+    result = await provider.complete(
+        prompt,
+        model=model,
+        max_tokens=12000
+    )
 
-        result = await provider.complete(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user}
-            ],
-            temperature=0,
-            max_tokens=8000,
-            json_mode=False
-        )
+    response = getattr(result, "text", None) or str(result)
+    print("GEMINI_RESPONSE =", bool(response))
+    print("GEMINI_RESPONSE_LENGTH =", len(response))
+    return response
 
-        content = getattr(result, "content", None)
 
-        if content is None:
-            content = str(result)
-
-        content = str(content).strip()
-
-        print("GEMINI_RESPONSE =", bool(content))
-        print("GEMINI_RESPONSE_LENGTH =", len(content))
-        print(
-            "GEMINI_RESPONSE_SHA256 =",
-            hashlib.sha256(
-                content.encode("utf-8", errors="replace")
-            ).hexdigest()
-        )
-
-        return content
-
-    except Exception as exc:
-        print("GEMINI_RESPONSE = False")
-        print("GEMINI_ERROR_TYPE =", type(exc).__name__)
-        print("GEMINI_ERROR =", str(exc)[:500])
-        return ""
 
 def repair(build_log, failure_kind):
-    print("KHALED_REPAIR_START=true")
+    import os, re, subprocess
 
-    # --------------------------------------------------------
-    # ATTEMPT 1
-    # --------------------------------------------------------
-    print("GEMINI_REPAIR_ATTEMPT=1")
+    print("KHALED_DIRECT_FILE_REPAIR=true")
 
-    response = asyncio.run(
-        ask_gemini(build_log, failure_kind)
+    context = _get_target_file_context(build_log)
+
+    m = re.search(r"===== FILE:\s*([^\s=]+)\s*=====", context)
+    if not m:
+        print("DIRECT_REPAIR_TARGET=NOT_FOUND")
+        return 10
+
+    target = m.group(1).strip()
+    if not target.startswith(("android_app/","khaled_android/")):
+        print("DIRECT_REPAIR_PROTECTED_TARGET=true")
+        return 11
+
+    if not os.path.isfile(target):
+        print("DIRECT_REPAIR_FILE_MISSING=true")
+        return 12
+
+    original = open(target,encoding="utf-8").read()
+
+    response = asyncio.run(ask_gemini(build_log,failure_kind))
+    if not response:
+        print("DIRECT_REPAIR_NO_GEMINI_RESPONSE=true")
+        return 13
+
+    # Remove accidental markdown fences only.
+    corrected = response.strip()
+    if corrected.startswith("```"):
+        corrected = re.sub(r"^```[^\n]*\n","",corrected)
+        corrected = re.sub(r"\n```$","",corrected).strip()
+
+    if len(corrected) < 100:
+        print("DIRECT_REPAIR_RESPONSE_TOO_SHORT=true")
+        return 14
+
+    # Safety: require substantial overlap with the real current file.
+    old_lines=set(x.strip() for x in original.splitlines() if len(x.strip())>=12)
+    new_lines=set(x.strip() for x in corrected.splitlines() if len(x.strip())>=12)
+    overlap=len(old_lines & new_lines)
+
+    print("DIRECT_REPAIR_TARGET=",target)
+    print("DIRECT_REPAIR_OVERLAP_LINES=",overlap)
+
+    if overlap < 3:
+        print("DIRECT_REPAIR_OVERLAP_REJECTED=true")
+        return 15
+
+    with open(target,"w",encoding="utf-8",newline="\n") as f:
+        f.write(corrected.rstrip()+"\n")
+
+    print("DIRECT_FILE_REPLACED=true")
+
+    # Immediate syntax/build validation.
+    check=subprocess.run(
+        ["bash","-lc","cd android_app && ./gradlew --no-daemon assembleDebug"],
+        text=True,capture_output=True
     )
 
-    patch = extract_patch(response)
+    print("DIRECT_REPAIR_BUILD_EXIT=",check.returncode)
 
-    print("PATCH_DETECTED=", bool(patch))
+    if check.returncode == 0:
+        print("DIRECT_REPAIR_VERIFIED=true")
+        print("REPAIR_RESULT=PATCH_APPLIED")
+        return 0
 
-    if not patch:
-        print("REPAIR_RESULT=NO_PATCH_ATTEMPT_1")
-    else:
-        if not protected_patch(patch):
-            print("REPAIR_RESULT=PROTECTED_PATH_REJECTED")
-            return 3
+    print("DIRECT_REPAIR_BUILD_FAILED=true")
+    print((check.stdout+"\n"+check.stderr)[-12000:])
+    print("REPAIR_RESULT=FAILED_FINAL_BUILD")
+    return 16
 
-        print("PATCH_VALIDATION_START=true")
-        print("PATCH_VALIDATION_ATTEMPT=1")
-
-        check = run(
-            [
-                "git",
-                "apply",
-                "--check",
-                "--whitespace=nowarn",
-                "-"
-            ],
-            patch
-        )
-
-        print(
-            "PATCH_CHECK_EXIT_ATTEMPT_1=",
-            check.returncode
-        )
-
-        if check.returncode == 0:
-            apply = run(
-                [
-                    "git",
-                    "apply",
-                    "--whitespace=nowarn",
-                    "-"
-                ],
-                patch
-            )
-
-            print(
-                "PATCH_APPLY_EXIT_ATTEMPT_1=",
-                apply.returncode
-            )
-
-            if apply.returncode == 0:
-                print("PATCH_APPLIED=true")
-                print("REPAIR_RESULT=PATCH_APPLIED")
-                return 0
-
-            print("PATCH_APPLY_FAILED_ATTEMPT_1=true")
-
-        else:
-            print("PATCH_CHECK_FAILED_ATTEMPT_1=true")
-            print(check.stdout[-10000:])
-
-    # --------------------------------------------------------
-    # ATTEMPT 2
-    # Send Gemini the REAL current file context again,
-    # plus the rejected patch and git error.
-    # No patch has been applied if validation failed.
-    # --------------------------------------------------------
-    print("=" * 60)
-    print("GEMINI_REPAIR_RETRY=true")
-    print("=" * 60)
-
-    retry_evidence = (
-        str(build_log)
-        + "\n\n"
-        "KHALED_FIRST_ATTEMPT_RESULT:\n"
-        + str(response)
-        + "\n\n"
-        "IMPORTANT_PATCH_RETRY:\n"
-        "The previous Gemini patch was NOT applied.\n"
-        "It failed KHALED git apply validation.\n"
-        "Generate a NEW unified diff against the CURRENT "
-        "REAL FILE CONTENT.\n"
-        "Do not reuse line numbers blindly.\n"
-        "The file content supplied by KHALED is authoritative.\n"
-    )
-
-    response2 = asyncio.run(
-        ask_gemini(retry_evidence, failure_kind)
-    )
-
-    patch2 = extract_patch(response2)
-
-    print("GEMINI_RETRY_RESPONSE =", bool(response2))
-    print("PATCH_DETECTED_ATTEMPT_2 =", bool(patch2))
-
-    if not patch2:
-        print("REPAIR_RESULT=NO_PATCH_ATTEMPT_2")
-        return 6
-
-    if not protected_patch(patch2):
-        print("REPAIR_RESULT=PROTECTED_PATH_REJECTED_ATTEMPT_2")
-        return 7
-
-    print("PATCH_VALIDATION_ATTEMPT=2")
-
-    check2 = run(
-        [
-            "git",
-            "apply",
-            "--check",
-            "--whitespace=nowarn",
-            "-"
-        ],
-        patch2
-    )
-
-    print(
-        "PATCH_CHECK_EXIT_ATTEMPT_2=",
-        check2.returncode
-    )
-
-    if check2.returncode != 0:
-        print("PATCH_CHECK_FAILED_ATTEMPT_2=true")
-        print(check2.stdout[-12000:])
-        print("REPAIR_RESULT=FAILED_AFTER_RETRY")
-        return 8
-
-    apply2 = run(
-        [
-            "git",
-            "apply",
-            "--whitespace=nowarn",
-            "-"
-        ],
-        patch2
-    )
-
-    print(
-        "PATCH_APPLY_EXIT_ATTEMPT_2=",
-        apply2.returncode
-    )
-
-    if apply2.returncode != 0:
-        print("PATCH_APPLY_FAILED_ATTEMPT_2=true")
-        print(apply2.stdout[-12000:])
-        return 9
-
-    print("PATCH_APPLIED=true")
-    print("REPAIR_RESULT=PATCH_APPLIED_ON_RETRY")
-    return 0
 
 
 

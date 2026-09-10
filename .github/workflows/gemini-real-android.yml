@@ -3,13 +3,18 @@ name: GQS - Gemini Real Android AI
 # KHALED_MANUAL_EXECUTION_TRIGGER
 
 on:
-  workflow_dispatch:
   push:
+    branches:
+      - khaled-repair-v7
     paths:
       - ".github/workflows/gemini-real-android.yml"
+      - "android_app/**"
+      - "khaled_android/**"
+      - ".khaled/**"
 
 permissions:
-  contents: read
+  contents: write
+
 
 env:
   FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
@@ -73,6 +78,7 @@ jobs:
       # 5. Build BOTH existing Android applications
       # ------------------------------------------------------------
       - name: Build Android applications
+  id: initial_build
       continue-on-error: true
         run: |
           set -e
@@ -124,6 +130,8 @@ jobs:
       # REAL BUILD FAILURE -> GEMINI -> REPAIR -> VERIFIED REBUILD
       # ------------------------------------------------------------
       - name: KHALED - Gemini Autonomous Build Repair
+  env:
+    KHALED_ROOT_FIX_EVIDENCE: "true"
         if: steps.initial_build.outcome == 'failure'
         id: khaled_repair
         env:
@@ -345,6 +353,10 @@ jobs:
           echo "Model: ${{ steps.device.outputs.model }}"
           echo "Android: ${{ steps.device.outputs.version }}"
           echo "=================================================="
+
+    echo "KHALED_FINAL_TRUTH_GATE=true"
+    echo "KHALED_RULE=REAL_EXECUTION_ONLY"
+    echo "KHALED_NO_FABRICATED_SUCCESS=true"
 
           gcloud firebase test android run \
             --type robo \

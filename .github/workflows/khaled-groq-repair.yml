@@ -1,24 +1,15 @@
-name: KHALED GROQ REAL REPAIR
+name: KHALED GROQ TARGETED SELF-REPAIR
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - khaled-gemini-direct-fix
 
 permissions:
   contents: write
-  actions: read
 
 jobs:
   repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-
-    env:
-      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      REPO: ${{ github.repository }}
-      BRANCH: khaled-gemini-direct-fix
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repair branch
@@ -27,303 +18,175 @@ jobs:
           ref: khaled-gemini-direct-fix
           fetch-depth: 0
 
-      - name: Install dependencies
-        run: python -m pip install requests
-
-      - name: Groq autonomous repair
+      - name: Collect TARGETED Gemini Self-Repair context
         shell: bash
         run: |
-          cat > /tmp/khaled_groq.py <<'PY'
-          import os, subprocess, pathlib, requests, json, re, sys
+          set -e
+          echo '=== TARGETED FILE DISCOVERY ==='
+          find . -type f \-not -path './.git/*' \ | grep -Ei 'gemini|self.?repair|repair' | head -100 > /tmp/targets.txt || true
+          cat /tmp/targets.txt
 
-          KEY=os.environ["GROQ_API_KEY"]
-          BRANCH="khaled-gemini-direct-fix"
-          MODEL="openai/gpt-oss-120b"
+          : > /tmp/context.txt
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            echo '' >> /tmp/context.txt
+            echo "===== FILE: $f =====" >> /tmp/context.txt
+            sed -n '1,240p' "$f" >> /tmp/context.txt || true
+          done < /tmp/targets.txt
 
-          def run(cmd, timeout=600):
-              try:
-                  p=subprocess.run(
-                      cmd,
-                      shell=True,
-                      text=True,
-                      stdout=subprocess.PIPE,
-                      stderr=subprocess.STDOUT,
-                      timeout=timeout
-                  )
-                  return p.returncode,p.stdout[-30000:]
-              except Exception as e:
-                  return 999,str(e)
+          echo '=== CONTEXT SIZE BEFORE CAP ==='
+          wc -c /tmp/context.txt
 
-          print("="*70)
-          print("KHALED / GROQ AUTONOMOUS REAL REPAIR")
-          print("MODEL:",MODEL)
-          print("BRANCH:",BRANCH)
-          print("="*70)
+          head -c 16000 /tmp/context.txt > /tmp/context-limited.txt
+          mv /tmp/context-limited.txt /tmp/context.txt
 
-          # Never touch main or V6
-          code,_=run("git branch --show-current")
-          if _.strip()!=BRANCH:
-              print("WRONG BRANCH - STOP")
-              sys.exit(1)
+          echo '=== CONTEXT SIZE SENT TO GROQ ==='
+          wc -c /tmp/context.txt
 
-          # Baseline reference
-          run("git fetch origin khaled-repair-v6 khaled-gemini-direct-fix")
+      - name: Real pre-repair build evidence
+        shell: bash
+        run: |
+          set +e
+          : > /tmp/build-before.txt
 
-          # Inventory
-          _,files=run(
-              "git ls-files | "
-              "grep -Ev '(^|/)(bin|obj|node_modules|\\.gradle|\\.git)/' | "
-              "head -n 500"
-          )
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew test --no-daemon 2>&1 | tee /tmp/build-before.txt
+            echo "GRADLE_EXIT=${PIPESTATUS[0]}" >> /tmp/build-before.txt
+          elif find . -name '*.sln' -o -name '*.csproj' | grep -q .; then
+            dotnet restore 2>&1 | tee /tmp/build-before.txt
+            dotnet build --no-restore 2>&1 | tee -a /tmp/build-before.txt
+            echo "DOTNET_EXIT=${PIPESTATUS[0]}" >> /tmp/build-before.txt
+          else
+            echo 'NO_SUPPORTED_BUILD_SYSTEM_FOUND' | tee /tmp/build-before.txt
+          fi
 
-          paths=[x.strip() for x in files.splitlines() if x.strip()]
+          tail -n 120 /tmp/build-before.txt
 
-          # Read real source/config files, bounded per file
-          extensions={
-              ".cs",".csproj",".sln",".java",".kt",".gradle",".xml",
-              ".json",".yml",".yaml",".props",".targets",".txt",
-              ".md",".sh",".ps1",".py",".js",".ts",".tsx",".jsx"
+      - name: Ask Groq for minimal unified diff
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, json, urllib.request
+
+          key = os.environ.get('GROQ_API_KEY','').strip()
+          if not key:
+              raise SystemExit('GROQ_API_KEY secret is missing')
+
+          context = open('/tmp/context.txt', encoding='utf-8', errors='ignore').read()
+          evidence = open('/tmp/build-before.txt', encoding='utf-8', errors='ignore').read()[-9000:]
+
+          prompt = '''You are KHALED's repair engineer.
+
+Repair ONLY the Gemini Self-Repair implementation.
+
+Rules:
+1. Do not redesign the project.
+2. Do not modify unrelated files.
+3. Do not invent APIs or test results.
+4. Preserve existing architecture.
+5. Fix only concrete defects visible in the supplied files/evidence.
+6. Return ONLY a unified git diff.
+7. The diff must use existing repository paths.
+8. If there is not enough evidence for a safe fix, return an empty diff.
+
+TARGETED SOURCE FILES:
+''' + context + '''
+
+REAL PRE-REPAIR BUILD/TEST EVIDENCE:
+''' + evidence + '''
+
+Return ONLY the patch beginning with diff --git, or return EMPTY if no safe repair is justified.
+'''
+
+          payload = {
+              'model': 'openai/gpt-oss-120b',
+              'messages': [
+                  {'role':'user','content':prompt}
+              ],
+              'temperature': 0.1,
+              'max_tokens': 1800
           }
 
-          chunks=[]
-          total=0
-          MAX_TOTAL=90000
-          MAX_FILE=12000
+          req = urllib.request.Request(
+              'https://api.groq.com/openai/v1/chat/completions',
+              data=json.dumps(payload).encode(),
+              headers={
+                  'Authorization':'Bearer '+key,
+                  'Content-Type':'application/json'
+              },
+              method='POST'
+          )
 
-          for p in paths:
-              pp=pathlib.Path(p)
-              if pp.suffix.lower() not in extensions:
-                  continue
-              try:
-                  data=pp.read_text(errors="ignore")
-              except:
-                  continue
-              if not data.strip():
-                  continue
+          try:
+              with urllib.request.urlopen(req, timeout=120) as resp:
+                  data=json.loads(resp.read().decode())
+          except Exception as e:
+              raise SystemExit('GROQ_REQUEST_FAILED: '+str(e))
 
-              data=data[:MAX_FILE]
-              block=f"\n===== FILE: {p} =====\n{data}\n"
-              if total+len(block)>MAX_TOTAL:
-                  break
-              chunks.append(block)
-              total+=len(block)
+          text = data['choices'][0]['message']['content']
+          open('/tmp/groq.patch','w',encoding='utf-8').write(text)
 
-          source="".join(chunks)
-
-          print("FILES:",len(paths))
-          print("SOURCE_CONTEXT_CHARS:",len(source))
-
-          # First get an actual build/test result before asking for repair.
-          build_commands=[]
-
-          slns=list(pathlib.Path(".").rglob("*.sln"))
-          csprojs=list(pathlib.Path(".").rglob("*.csproj"))
-          gradlew=list(pathlib.Path(".").rglob("gradlew"))
-
-          if slns or csprojs:
-              build_commands=[
-                  "dotnet restore",
-                  "dotnet build --no-restore"
-              ]
-          elif gradlew:
-              build_commands=[
-                  "chmod +x $(find . -name gradlew | head -1)",
-                  "$(find . -name gradlew | head -1) test"
-              ]
-
-          evidence=[]
-
-          for cmd in build_commands:
-              print("REAL TEST:",cmd)
-              rc,out=run(cmd,timeout=900)
-              evidence.append(
-                  f"COMMAND: {cmd}\nEXIT: {rc}\nOUTPUT:\n{out}"
-              )
-              if rc!=0:
-                  break
-
-          test_evidence="\n\n".join(evidence)
-
-          system="""You are KHALED's autonomous software repair engineer.
-          You must perform REAL repository maintenance.
-          Never invent files, errors, tests, APIs, or results.
-          Work only from the supplied repository contents and real command output.
-          Return a unified git diff only.
-          Do not redesign or replace the project.
-          Preserve existing architecture.
-          Fix the actual demonstrated failure first.
-          If evidence is insufficient, return an empty diff."""
-
-          prompt=f"""
-          REPOSITORY: {os.environ.get("REPO")}
-          WORK BRANCH: {BRANCH}
-          BASELINE: khaled-repair-v6
-          BASELINE SHA: c87edb18335e5869ed2278e1ecf18ee579c4cc6e
-
-          IMPORTANT:
-          - NEVER modify main.
-          - NEVER modify khaled-repair-v6.
-          - Modify only the current repair branch.
-          - Do not fabricate success.
-          - Do not create a replacement project.
-          - Repair existing implementation.
-
-          REAL FILE INVENTORY:
-          {files}
-
-          REAL SOURCE/CONFIG CONTENT:
-          {source}
-
-          REAL BUILD/TEST EVIDENCE:
-          {test_evidence}
-
-          Determine the actual failure from the evidence.
-          Produce the smallest safe repair that addresses it.
-
-          Return ONLY:
-          ```diff
-          <unified git diff>
-          ```
-          """
-
-          def ask(prompt):
-              r=requests.post(
-                  "https://api.groq.com/openai/v1/chat/completions",
-                  headers={
-                      "Authorization":"Bearer "+KEY,
-                      "Content-Type":"application/json"
-                  },
-                  json={
-                      "model":MODEL,
-                      "messages":[
-                          {"role":"system","content":system},
-                          {"role":"user","content":prompt}
-                      ],
-                      "temperature":0.05,
-                      "max_tokens":30000
-                  },
-                  timeout=300
-              )
-              print("GROQ HTTP:",r.status_code)
-              if r.status_code!=200:
-                  print(r.text[:5000])
-                  sys.exit(1)
-              return r.json()["choices"][0]["message"]["content"]
-
-          answer=ask(prompt)
-
-          m=re.search(r"```diff\s*(.*?)```",answer,re.S)
-
-          if not m:
-              print("NO PATCH RETURNED")
-              print(answer[-5000:])
-              sys.exit(1)
-
-          patch=m.group(1).strip()
-
-          if not patch:
-              print("EMPTY PATCH")
-              sys.exit(0)
-
-          pathlib.Path("/tmp/repair.patch").write_text(patch)
-
-          rc,out=run("git apply --check /tmp/repair.patch")
-          print("PATCH CHECK:",rc)
-          print(out)
-
-          if rc!=0:
-              print("PATCH REJECTED")
-              sys.exit(1)
-
-          rc,out=run("git apply /tmp/repair.patch")
-          print("PATCH APPLY:",rc)
-          print(out)
-
-          if rc!=0:
-              sys.exit(1)
-
-          print("REAL PATCH APPLIED")
-          rc,out=run("git diff --check")
-          print("DIFF CHECK:",rc)
-          print(out)
-
-          # Re-run real build/test after repair
-          final=[]
-          for cmd in build_commands:
-              print("POST-REPAIR TEST:",cmd)
-              rc,out=run(cmd,timeout=900)
-              final.append(
-                  f"COMMAND: {cmd}\nEXIT: {rc}\nOUTPUT:\n{out}"
-              )
-              print(out)
-              if rc!=0:
-                  break
-
-          # If still failing, give Groq the actual new failure and allow one repair iteration.
-          if final and final[-1].split("EXIT:")[-1].split("\n")[0].strip()!="0":
-              failure="\n\n".join(final)
-
-              retry_prompt=f"""
-              The previous repair was applied, but the REAL post-repair build/test
-              still failed.
-
-              EXISTING SOURCE CONTEXT:
-              {source}
-
-              NEW REAL FAILURE:
-              {failure}
-
-              Return ONLY a unified git diff that fixes this demonstrated failure.
-              Do not invent evidence.
-              Do not redesign the project.
-              """
-
-              answer=ask(retry_prompt)
-              m=re.search(r"```diff\s*(.*?)```",answer,re.S)
-
-              if m and m.group(1).strip():
-                  pathlib.Path("/tmp/repair2.patch").write_text(m.group(1).strip())
-
-                  rc,out=run("git apply --check /tmp/repair2.patch")
-                  print("SECOND PATCH CHECK:",rc)
-                  print(out)
-
-                  if rc==0:
-                      rc,out=run("git apply /tmp/repair2.patch")
-                      print("SECOND PATCH APPLY:",rc)
-                      print(out)
-
-                      if rc==0:
-                          for cmd in build_commands:
-                              print("FINAL REAL TEST:",cmd)
-                              rc,out=run(cmd,timeout=900)
-                              print(out)
-
-          print("="*70)
-          print("FINAL GIT STATUS")
-          print("="*70)
-          print(run("git status --short")[1])
-          print(run("git diff --stat")[1])
-
-          # Commit only actual changes.
-          rc,status=run("git status --short")
-
-          if status.strip():
-              run("git config user.name 'KHALED-GROQ-REPAIR'")
-              run("git config user.email '41898282+github-actions[bot]@users.noreply.github.com'")
-
-              rc,out=run("git add -A")
-              print(out)
-
-              rc,out=run("git commit -m 'KHALED: Groq autonomous real repair'")
-              print(out)
-
-              if rc==0:
-                  rc,out=run("git push origin khaled-gemini-direct-fix",timeout=600)
-                  print("PUSH EXIT:",rc)
-                  print(out)
-
-          print("KHALED GROQ REAL REPAIR FINISHED")
+          print('=== GROQ RESPONSE SIZE ===')
+          print(len(text))
+          print(text[:5000])
           PY
 
-          python /tmp/khaled_groq.py
+      - name: Validate and apply Groq patch
+        shell: bash
+        run: |
+          set -e
+          if grep -q '^diff --git ' /tmp/groq.patch; then
+            git apply --check /tmp/groq.patch
+            git apply /tmp/groq.patch
+            git diff --check
+          else
+            echo 'NO_VALID_PATCH_RETURNED'
+          fi
+
+          echo '=== MODIFIED FILES ==='
+          git status --short
+
+      - name: Real post-repair build/test
+        shell: bash
+        run: |
+          set +e
+          : > /tmp/build-after.txt
+
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew test --no-daemon 2>&1 | tee /tmp/build-after.txt
+            code=${PIPESTATUS[0]}
+          elif find . -name '*.sln' -o -name '*.csproj' | grep -q .; then
+            dotnet restore 2>&1 | tee /tmp/build-after.txt
+            dotnet build --no-restore 2>&1 | tee -a /tmp/build-after.txt
+            code=${PIPESTATUS[0]}
+          else
+            echo 'NO_SUPPORTED_BUILD_SYSTEM_FOUND' | tee /tmp/build-after.txt
+            code=2
+          fi
+
+          echo 'POST_REPAIR_EXIT='$code
+          tail -n 160 /tmp/build-after.txt
+          exit $code
+
+      - name: Commit ONLY verified repair
+        shell: bash
+        run: |
+          set -e
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git status --short
+          git diff --check
+
+          if git diff --quiet; then
+            echo 'NO_SOURCE_CHANGES_TO_COMMIT'
+            exit 0
+          fi
+
+          git add -u
+          git commit -m 'KHALED: verified targeted Groq Gemini self-repair'
+          git push origin HEAD:khaled-gemini-direct-fix

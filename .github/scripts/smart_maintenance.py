@@ -965,8 +965,8 @@ def main() -> None:
     ]
 
     successful_command_observed = False
-write_observed = False
-verification_after_write_observed = False
+    write_observed = False
+    verification_after_write_observed = False
 
     explicit_verified = False
 

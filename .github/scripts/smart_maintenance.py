@@ -742,6 +742,40 @@ def select_model() -> str:
 # GROQ REQUEST
 # ============================================================
 
+
+# GROQ_CONTEXT_COMPACTED:
+# Keep the model request below the free/on-demand TPM ceiling.
+# Large historical tool outputs are not replayed indefinitely.
+def _compact_messages_for_groq(messages, max_chars=24000):
+    if not messages:
+        return messages
+
+    out = []
+    total = 0
+
+    # Always preserve system + current user/task context.
+    for i, msg in enumerate(messages):
+        m = dict(msg)
+        content = m.get("content")
+
+        if isinstance(content, str):
+            # Keep individual tool/output messages bounded.
+            if len(content) > 6000:
+                content = content[:6000] + "\n[OUTPUT_COMPACTED]"
+                m["content"] = content
+
+        encoded = len(str(m))
+
+        # Preserve first two messages and newest messages.
+        if i < 2 or i >= len(messages) - 3:
+            out.append(m)
+            total += encoded
+        elif total < max_chars:
+            out.append(m)
+            total += encoded
+
+    return out
+
 def ask_groq(
     model: str,
     messages: list[dict[str, Any]]
@@ -829,6 +863,7 @@ def execute_tool(
             return result
 
         if name == "write_file":
+            write_observed = True
 
             result = write_file(
                 arguments["path"],
@@ -930,6 +965,8 @@ def main() -> None:
     ]
 
     successful_command_observed = False
+write_observed = False
+verification_after_write_observed = False
 
     explicit_verified = False
 
@@ -1001,6 +1038,8 @@ def main() -> None:
                     ):
 
                         successful_command_observed = True
+                    if write_observed:
+                        verification_after_write_observed = True
 
                     round_record[
                         "tools"

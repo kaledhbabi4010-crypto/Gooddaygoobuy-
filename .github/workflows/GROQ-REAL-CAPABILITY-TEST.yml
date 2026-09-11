@@ -1,0 +1,90 @@
+name: Groq Real Capability Test
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  groq:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Real Groq test
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os,base64,requests
+
+          owner,repo=os.environ["GITHUB_REPOSITORY"].split("/")
+          h={"Authorization":"Bearer "+os.environ["GH_TOKEN"],
+             "Accept":"application/vnd.github+json"}
+          api=f"https://api.github.com/repos/{owner}/{repo}"
+
+          target=".github/workflows/gemini-agent.yml"
+          r=requests.get(f"{api}/contents/{target}?ref=main",headers=h)
+          r.raise_for_status()
+          target_text=base64.b64decode(r.json()["content"]).decode()
+
+          job_id="103247605902"
+          r=requests.get(f"{api}/actions/jobs/{job_id}/logs",headers=h)
+          r.raise_for_status()
+          log=r.text
+
+          print("TARGET_SIZE:",len(target_text))
+          print("LOG_SIZE:",len(log))
+
+          system=(
+            "You are a senior GitHub Actions repair engineer. "
+            "Analyze the complete workflow and complete failure log. "
+            "Determine the root cause yourself from evidence. "
+            "Do not invent errors. Do not redesign unrelated code. "
+            "Return JSON only with root_cause, evidence, exact_repair, "
+            "corrected_file, confidence. "
+            "corrected_file must be the COMPLETE corrected workflow."
+          )
+
+          user="WORKFLOW:\n"+target_text+"\n\nFAILURE LOG:\n"+log
+
+          key=os.environ.get("GROQ_API_KEY")
+          if not key:
+              raise RuntimeError("GROQ_API_KEY unavailable")
+
+          payload={
+            "model":"llama-3.3-70b-versatile",
+            "temperature":0,
+            "messages":[
+              {"role":"system","content":system},
+              {"role":"user","content":user}
+            ]
+          }
+
+          r=requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+              "Authorization":"Bearer "+key,
+              "Content-Type":"application/json"
+            },
+            json=payload,
+            timeout=180
+          )
+
+          print("GROQ_HTTP:",r.status_code)
+          r.raise_for_status()
+
+          answer=r.json()["choices"][0]["message"]["content"]
+
+          print("="*70)
+          print("GROQ_RESPONSE_BEGIN")
+          print(answer)
+          print("GROQ_RESPONSE_END")
+          print("="*70)
+          print("NO_FILE_MODIFIED=TRUE")
+          print("BUILD=OFF")
+          print("TEST=OFF")
+          print("REBUILD=OFF")
+          PY

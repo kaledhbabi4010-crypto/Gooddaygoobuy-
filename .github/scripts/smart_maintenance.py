@@ -6,6 +6,7 @@ import json
 import subprocess
 import hashlib
 import shutil
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -746,12 +747,42 @@ def ask_groq(
     messages: list[dict[str, Any]]
 ):
 
-    return client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=TOOLS,
-        tool_choice="auto",
-        temperature=0,
+    max_tokens = int(
+        os.environ.get(
+            "GROQ_MAX_COMPLETION_TOKENS",
+            "3000"
+        )
+    )
+
+    for attempt in range(1, 4):
+        try:
+            return client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=TOOLS,
+                tool_choice="auto",
+                temperature=0,
+                max_completion_tokens=max_tokens,
+            )
+
+        except Exception as exc:
+            error_text = str(exc)
+
+            if "429" not in error_text:
+                raise
+
+            wait_seconds = 10 * attempt
+
+            log(
+                f"GROQ_RATE_LIMIT_RETRY "
+                f"{attempt}/3: waiting "
+                f"{wait_seconds}s"
+            )
+
+            time.sleep(wait_seconds)
+
+    raise RuntimeError(
+        "Groq rate limit persisted after 3 retries."
     )
 
 

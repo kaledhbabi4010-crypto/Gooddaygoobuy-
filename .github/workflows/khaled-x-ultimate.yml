@@ -106,8 +106,7 @@ jobs:
         shell: bash
         run: |
 
-          set +e
-
+          set -e
           mkdir -p \
             .khaled/evidence
 

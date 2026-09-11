@@ -224,7 +224,6 @@ jobs:
       # ------------------------------------------------------------
       - name: Run real Android physical-device Robo test
         id: test
-        continue-on-error: true
         run: |
           set -o pipefail
 

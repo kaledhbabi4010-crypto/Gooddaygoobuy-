@@ -191,7 +191,6 @@ jobs:
 
       - name: Android emulator — install, launch and runtime proof
         id: runtime1
-        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -215,7 +214,6 @@ jobs:
       - name: Runtime failure — Gemini repair
         id: repair1
         if: ${{ steps.runtime1.outcome == 'failure' }}
-        continue-on-error: true
         shell: bash
         env:
           GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -237,7 +235,6 @@ jobs:
       - name: Runtime failure — rebuild after repair
         id: rebuild1
         if: ${{ steps.repair1.outcome == 'success' }}
-        continue-on-error: true
         shell: bash
         run: |
           set -e
@@ -265,7 +262,6 @@ jobs:
       - name: Round 2 — Android emulator runtime proof
         if: ${{ steps.rebuild1.outcome == 'success' }}
         id: runtime2
-        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -288,7 +284,6 @@ jobs:
       - name: Runtime failure — Gemini repair round 2
         id: repair2
         if: ${{ steps.runtime2.outcome == 'failure' }}
-        continue-on-error: true
         shell: bash
         env:
           GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -310,7 +305,6 @@ jobs:
       - name: Runtime failure — rebuild after repair round 2
         id: rebuild2
         if: ${{ steps.repair2.outcome == 'success' }}
-        continue-on-error: true
         shell: bash
         run: |
           set -e
@@ -322,7 +316,6 @@ jobs:
       - name: Round 3 — Android emulator runtime proof
         id: runtime3
         if: ${{ steps.rebuild2.outcome == 'success' }}
-        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35

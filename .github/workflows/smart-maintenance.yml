@@ -27,12 +27,25 @@ jobs:
       
       - name: بناء المشروع
         id: build
-        continue-on-error: true
+        shell: bash
         run: |
-          chmod +x gradlew || true
-          ./gradlew build || npm run build || echo "بناء عادي"
-      
-      # 👇 هذا هو الحل الموثوق - يعمل تلقائياً عند الفشل
+          set -euo pipefail
+          if [ -x "./gradlew" ]; then
+            ./gradlew build
+          elif [ -f "KHALED.sln" ]; then
+            if ! command -v dotnet >/dev/null 2>&1; then
+              echo "ERROR: dotnet is required for KHALED.sln"
+              exit 1
+            fi
+            dotnet build KHALED.sln --nologo
+          elif [ -f "package.json" ]; then
+            npm ci
+            npm run build
+          else
+            echo "ERROR: No supported build system detected."
+            exit 1
+          fi
+
       - name: 🚑 إصلاح تلقائي بالذكاء الاصطناعي
         if: failure()
         uses: mariorazo97/ai-ci-healer@v1
@@ -42,3 +55,34 @@ jobs:
           groq-api-key: ${{ secrets.GROQ_API_KEY }}
           confidence-threshold: 60
           enable-comments: true
+
+
+      # ============================================================
+      # POST-REPAIR VERIFICATION
+      # Never declare success without a real build/test.
+      # ============================================================
+      - name: POST-REPAIR VERIFICATION
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== POST-REPAIR VERIFICATION ==="
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew build
+          elif [ -f "./KHALED.sln" ]; then
+            if ! command -v dotnet >/dev/null 2>&1; then
+              echo "ERROR: dotnet is required to verify KHALED.sln"
+              exit 1
+            fi
+            dotnet build KHALED.sln --nologo
+            dotnet test KHALED.sln --no-restore --nologo
+          elif [ -f "./package.json" ]; then
+            npm ci
+            npm run build
+          else
+            echo "ERROR: No supported project detected for verification."
+            exit 1
+          fi

@@ -1236,9 +1236,8 @@ def main() -> None:
     ] = git_diff()
 
     if (
-        write_observed
-        and verification_after_write_observed
-        and successful_command_observed
+        (write_observed and verification_after_write_observed and successful_command_observed)
+        or (explicit_verified and successful_command_observed)
     ):
         evidence[
             "final_status"

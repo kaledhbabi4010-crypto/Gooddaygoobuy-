@@ -1,0 +1,132 @@
+name: Groq Real Capability Test
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  groq:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Groq surgical diagnosis
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os
+          import base64
+          import requests
+
+          owner, repo = os.environ["GITHUB_REPOSITORY"].split("/")
+
+          headers = {
+              "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+              "Accept": "application/vnd.github+json"
+          }
+
+          api = f"https://api.github.com/repos/{owner}/{repo}"
+
+          target = ".github/workflows/gemini-agent.yml"
+          job_id = "103247605902"
+
+          r = requests.get(
+              f"{api}/contents/{target}?ref=main",
+              headers=headers
+          )
+          r.raise_for_status()
+
+          target_text = base64.b64decode(
+              r.json()["content"]
+          ).decode("utf-8")
+
+          r = requests.get(
+              f"{api}/actions/jobs/{job_id}/logs",
+              headers=headers
+          )
+          r.raise_for_status()
+
+          failure_log = r.text
+
+          print("TARGET:", target)
+          print("TARGET_SIZE:", len(target_text))
+          print("FAILURE_LOG_SIZE:", len(failure_log))
+
+          system_prompt = (
+              "You are a senior GitHub Actions repair engineer. "
+              "Analyze the supplied workflow and complete failure log. "
+              "Determine the root cause yourself from evidence. "
+              "Do not invent errors. "
+              "Do not redesign unrelated code. "
+              "Do not rebuild the project. "
+              "Do not run tests. "
+              "Return JSON only with these keys: "
+              "root_cause, evidence, exact_repair, corrected_file, confidence. "
+              "corrected_file must contain the COMPLETE corrected workflow."
+          )
+
+          user_prompt = (
+              "TARGET WORKFLOW FILE:\n"
+              + target_text
+              + "\n\nCOMPLETE FAILURE LOG:\n"
+              + failure_log
+              + "\n\n"
+              "Find the actual root cause and propose the smallest repair."
+          )
+
+          key = os.environ.get("GROQ_API_KEY")
+
+          if not key:
+              raise RuntimeError("GROQ_API_KEY unavailable")
+
+          payload = {
+              "model": "openai/gpt-oss-120b",
+              "temperature": 0,
+              "messages": [
+                  {
+                      "role": "system",
+                      "content": system_prompt
+                  },
+                  {
+                      "role": "user",
+                      "content": user_prompt
+                  }
+              ]
+          }
+
+          r = requests.post(
+              "https://api.groq.com/openai/v1/chat/completions",
+              headers={
+                  "Authorization": "Bearer " + key,
+                  "Content-Type": "application/json"
+              },
+              json=payload,
+              timeout=180
+          )
+
+          print("GROQ_HTTP:", r.status_code)
+
+          if not r.ok:
+              print("GROQ_ERROR_BODY:")
+              print(r.text[:5000])
+              r.raise_for_status()
+
+          answer = r.json()["choices"][0]["message"]["content"]
+
+          print("=" * 70)
+          print("GROQ_RESPONSE_BEGIN")
+          print(answer)
+          print("GROQ_RESPONSE_END")
+          print("=" * 70)
+
+          print("FILE_MODIFIED=NO")
+          print("BUILD=OFF")
+          print("TEST=OFF")
+          print("REBUILD=OFF")
+          PY

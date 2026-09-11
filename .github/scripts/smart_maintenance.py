@@ -6,6 +6,7 @@ import json
 import subprocess
 import hashlib
 import shutil
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -45,6 +46,12 @@ COMMAND_TIMEOUT = int(
 )
 
 MAX_FILE_SIZE = 400_000
+
+
+# Repair outcome flags (module-level so the tool router can update them)
+write_observed = False
+successful_command_observed = False
+verification_after_write_observed = False
 
 
 IGNORED_DIRS = {
@@ -741,17 +748,129 @@ def select_model() -> str:
 # GROQ REQUEST
 # ============================================================
 
+
+# GROQ_CONTEXT_COMPACTED:
+# Keep the model request below the free/on-demand TPM ceiling.
+# Large historical tool outputs are not replayed indefinitely.
+def _compact_messages_for_groq(messages, max_chars=24000):
+    if not messages:
+        return messages
+
+    out = []
+    total = 0
+
+    # Always preserve system + current user/task context.
+    for i, msg in enumerate(messages):
+        m = dict(msg)
+        content = m.get("content")
+
+        if isinstance(content, str):
+            # Keep individual tool/output messages bounded.
+            if len(content) > 6000:
+                content = content[:6000] + "\n[OUTPUT_COMPACTED]"
+                m["content"] = content
+
+        encoded = len(str(m))
+
+        # Preserve first two messages and newest messages.
+        if i < 2 or i >= len(messages) - 3:
+            out.append(m)
+            total += encoded
+        elif total < max_chars:
+            out.append(m)
+            total += encoded
+
+    return out
+
+def compact_groq_messages(
+    messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """
+    Keep Groq request context bounded.
+    Preserve system message and newest conversation/tool context.
+    """
+    MAX_MESSAGE_CHARS = 2200
+    MAX_MESSAGES = 8
+
+    if not messages:
+        return messages
+
+    def compact_message(message):
+        if not isinstance(message, dict):
+            return message
+
+        out = dict(message)
+
+        content = out.get("content")
+
+        if isinstance(content, str) and len(content) > MAX_MESSAGE_CHARS:
+            out["content"] = (
+                content[:MAX_MESSAGE_CHARS]
+                + "\n[CONTEXT_TRUNCATED_BY_GROQ_REPAIR_ENGINE]"
+            )
+
+        return out
+
+    # Always preserve system message.
+    system = []
+    rest = messages
+
+    if isinstance(messages[0], dict) and messages[0].get("role") == "system":
+        system = [compact_message(messages[0])]
+        rest = messages[1:]
+
+    # Keep newest messages because they contain the current tool result/error.
+    recent = rest[-MAX_MESSAGES:]
+
+    return system + [
+        compact_message(message)
+        for message in recent
+    ]
+
+
 def ask_groq(
     model: str,
     messages: list[dict[str, Any]]
 ):
 
-    return client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=TOOLS,
-        tool_choice="auto",
-        temperature=0,
+    max_tokens = int(
+        os.environ.get(
+            "GROQ_MAX_COMPLETION_TOKENS",
+            "3000"
+        )
+    )
+
+    for attempt in range(1, 4):
+        try:
+            compact_messages = compact_groq_messages(messages)
+
+            return client.chat.completions.create(
+                model=model,
+                messages=compact_messages,
+                tools=TOOLS,
+                tool_choice="auto",
+                temperature=0,
+                max_completion_tokens=max_tokens,
+            )
+
+        except Exception as exc:
+            error_text = str(exc)
+
+            if "429" not in error_text:
+                raise
+
+            wait_seconds = 10 * attempt
+
+            log(
+                f"GROQ_RATE_LIMIT_RETRY "
+                f"{attempt}/3: waiting "
+                f"{wait_seconds}s"
+            )
+
+            time.sleep(wait_seconds)
+
+    raise RuntimeError(
+        "Groq rate limit persisted after 3 retries."
     )
 
 
@@ -798,6 +917,8 @@ def execute_tool(
             return result
 
         if name == "write_file":
+            global write_observed
+            write_observed = True
 
             result = write_file(
                 arguments["path"],
@@ -898,7 +1019,11 @@ def main() -> None:
         },
     ]
 
+    global write_observed, successful_command_observed, verification_after_write_observed
+
     successful_command_observed = False
+    write_observed = False
+    verification_after_write_observed = False
 
     explicit_verified = False
 
@@ -965,11 +1090,12 @@ def main() -> None:
 
                     if (
                         name == "run_command"
+                        and write_observed
                         and "EXIT_CODE=0"
                         in result
                     ):
-
                         successful_command_observed = True
+                        verification_after_write_observed = True
 
                     round_record[
                         "tools"
@@ -990,6 +1116,8 @@ def main() -> None:
 
                         "tool_call_id":
                             tool_call.id,
+
+                        "name": name,
 
                         "content": result,
                     })
@@ -1108,26 +1236,14 @@ def main() -> None:
     ] = git_diff()
 
     if (
-        explicit_verified
-        and
-        successful_command_observed
+        write_observed
+        and verification_after_write_observed
+        and successful_command_observed
     ):
-
         evidence[
             "final_status"
         ] = "VERIFIED_FIXED"
 
-    elif successful_command_observed:
-
-        evidence[
-            "final_status"
-        ] = "UNABLE_TO_VERIFY"
-
-    else:
-
-        evidence[
-            "final_status"
-        ] = "UNABLE_TO_VERIFY"
 
     report = (
         STATE_DIR / "evidence.json"
@@ -1156,8 +1272,20 @@ def main() -> None:
     )
     print()
     print(
-        "No automatic commit or push was performed."
+        "No automatic commit or push was performed "
+        "by the repair engine itself. The calling "
+        "workflow is responsible for committing "
+        "verified fixes."
     )
+
+    if (
+        evidence["final_status"]
+        == "VERIFIED_FIXED"
+    ):
+
+        sys.exit(0)
+
+    sys.exit(1)
 
 
 if __name__ == "__main__":

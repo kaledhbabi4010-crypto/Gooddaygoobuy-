@@ -1,6 +1,16 @@
 name: KHALED - Groq Gemini Self Repair Test
 
 on:
+  push:
+    branches:
+      - groq-real-repair-test
+      - main
+    paths:
+      - '.github/workflows/gemini-invoke.yml'
+      - '.github/workflows/groq-gemini-self-repair-test.yml'
+      - '.github/scripts/smart_maintenance.py'
+  schedule:
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -13,26 +23,35 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install Groq SDK
         run: python -m pip install --disable-pip-version-check groq
 
-      - name: Verify target evidence
+      - name: Precheck target file
+        id: precheck
         run: |
           set -euo pipefail
-          test -f ".github/workflows/gemini-invoke.yml"
-          echo "TARGET=.github/workflows/gemini-invoke.yml"
-          cat ".github/workflows/gemini-invoke.yml"
+          TARGET=".github/workflows/gemini-invoke.yml"
+          test -f "$TARGET"
+          if grep -q "name:" "$TARGET" && grep -q "on:" "$TARGET" && grep -q "jobs:" "$TARGET"; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "TARGET ALREADY VALID - no repair needed"
+          else
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "TARGET INVALID - repair required"
+          fi
 
       - name: Run Groq surgical repair
+        if: steps.precheck.outputs.valid == 'false'
+        continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
@@ -41,40 +60,53 @@ jobs:
           python3 .github/scripts/smart_maintenance.py \
           "Repair ONLY .github/workflows/gemini-invoke.yml.
 
-          Evidence: the file is 42 bytes and contains only:
-          .github/workflows/gemini-plan-execute.yml
+          Evidence: the file is missing the required GitHub Actions keys
+          name:, on:, and jobs:, so it is not a valid workflow.
 
-          name, on, and jobs are missing.
-
-          Use repository evidence to determine the smallest justified repair.
+          Use repository evidence to determine the smallest justified repair:
+          turn it into a minimal valid GitHub Actions workflow with
+          name, on, and jobs keys.
 
           Modify ONLY .github/workflows/gemini-invoke.yml.
           Do NOT modify any other file.
           Do NOT rebuild the project.
           Do NOT run the full test suite.
           Do NOT refactor or clean unrelated code.
-          Create a backup before editing.
-          Inspect the final diff.
-          Perform only targeted YAML/workflow validation.
           Report VERIFIED_FIXED only with actual evidence.
           Otherwise report UNABLE_TO_VERIFY."
 
       - name: Verify only target changed
-        if: always()
+        id: verify
+        if: always() && steps.precheck.outputs.valid == 'false'
         run: |
           set -euo pipefail
           echo "=== GIT STATUS ==="
-          git status --short
+          git status --short -- . ':!.groq-repair/'
           echo "=== TARGET DIFF ==="
           git diff -- ".github/workflows/gemini-invoke.yml"
 
-          OTHER=$(git status --porcelain | grep -v "gemini-invoke.yml" || true)
+          OTHER=$(git status --porcelain -- . ':!.groq-repair/' | grep -v "gemini-invoke.yml" || true)
 
           if [ -n "$OTHER" ]; then
             echo "ERROR: OTHER FILES MODIFIED"
             echo "$OTHER"
             exit 50
           fi
+
+      - name: Commit and push repair
+        if: always() && steps.precheck.outputs.valid == 'false' && steps.verify.outcome == 'success'
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- . ':!.groq-repair/')" ]; then
+            echo "NOTHING_TO_COMMIT"
+            exit 0
+          fi
+          git config user.name "groq-repair-bot"
+          git config user.email "actions@github.com"
+          git checkout - 2>/dev/null || true
+          git add -- ".github/workflows/gemini-invoke.yml"
+          git commit -m "fix: auto-repair gemini-invoke.yml [skip ci]"
+          git push
 
       - name: Targeted validation
         if: always()

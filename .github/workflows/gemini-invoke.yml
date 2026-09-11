@@ -1,1 +1,19 @@
-.github/workflows/gemini-plan-execute.yml
+name: Gemini Invoke
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  invoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Report status
+        run: |
+          echo "Gemini Invoke: valid minimal workflow."
+          echo "The full Gemini self-repair flow lives in gemini-agent.yml."

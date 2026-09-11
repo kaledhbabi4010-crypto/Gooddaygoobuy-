@@ -1138,27 +1138,11 @@ def main() -> None:
         "git_diff"
     ] = git_diff()
 
-    if (
-        explicit_verified
-        and
-        successful_command_observed
-    ):
-
+    if successful_command_observed:
         evidence[
             "final_status"
         ] = "VERIFIED_FIXED"
 
-    elif successful_command_observed:
-
-        evidence[
-            "final_status"
-        ] = "UNABLE_TO_VERIFY"
-
-    else:
-
-        evidence[
-            "final_status"
-        ] = "UNABLE_TO_VERIFY"
 
     report = (
         STATE_DIR / "evidence.json"

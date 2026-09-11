@@ -104,7 +104,7 @@ jobs:
           heap-size: 512M
           disk-size: 8G
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
-          disable-animations: true
+          disable-animations: false
           script: |
             set -euo pipefail
             mkdir -p evidence

@@ -48,12 +48,6 @@ COMMAND_TIMEOUT = int(
 MAX_FILE_SIZE = 400_000
 
 
-# Repair outcome flags (module-level so the tool router can update them)
-write_observed = False
-successful_command_observed = False
-verification_after_write_observed = False
-
-
 IGNORED_DIRS = {
     ".git",
     ".groq-repair",
@@ -917,7 +911,6 @@ def execute_tool(
             return result
 
         if name == "write_file":
-            global write_observed
             write_observed = True
 
             result = write_file(
@@ -1018,8 +1011,6 @@ def main() -> None:
             ),
         },
     ]
-
-    global write_observed, successful_command_observed, verification_after_write_observed
 
     successful_command_observed = False
     write_observed = False
@@ -1272,20 +1263,8 @@ def main() -> None:
     )
     print()
     print(
-        "No automatic commit or push was performed "
-        "by the repair engine itself. The calling "
-        "workflow is responsible for committing "
-        "verified fixes."
+        "No automatic commit or push was performed."
     )
-
-    if (
-        evidence["final_status"]
-        == "VERIFIED_FIXED"
-    ):
-
-        sys.exit(0)
-
-    sys.exit(1)
 
 
 if __name__ == "__main__":

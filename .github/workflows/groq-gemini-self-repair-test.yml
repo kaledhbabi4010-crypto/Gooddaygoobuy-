@@ -1,4 +1,4 @@
-name: KHALED - Groq Gemini Self Repair Test
+name: KHALED - Workflow Auto Detect and Repair
 
 on:
   push:
@@ -6,18 +6,16 @@ on:
       - groq-real-repair-test
       - main
     paths:
-      - '.github/workflows/gemini-invoke.yml'
-      - '.github/workflows/groq-gemini-self-repair-test.yml'
-      - '.github/scripts/smart_maintenance.py'
+      - '.github/workflows/**'
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '15 */2 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  surgical-repair:
+  detect-and-repair:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -27,66 +25,62 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
+      - name: Install actionlint validator
+        run: |
+          cd /tmp
+          curl -sSL -o download-actionlint.bash https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash
+          bash ./download-actionlint.bash latest
 
-      - name: Install Groq SDK
-        run: python -m pip install --disable-pip-version-check groq
-
-      - name: Precheck target file
-        id: precheck
+      - name: Detect defects in all workflows
+        id: detect
         run: |
           set -euo pipefail
-          TARGET=".github/workflows/gemini-invoke.yml"
-          test -f "$TARGET"
-          if grep -q "name:" "$TARGET" && grep -q "on:" "$TARGET" && grep -q "jobs:" "$TARGET"; then
-            echo "valid=true" >> "$GITHUB_OUTPUT"
-            echo "TARGET ALREADY VALID - no repair needed"
+          /tmp/actionlint -no-color .github/workflows/*.yml > /tmp/actionlint-report.txt 2>&1 || true
+          if [ -s /tmp/actionlint-report.txt ]; then
+            echo "defects=true" >> "$GITHUB_OUTPUT"
+            echo "=== DEFECTS DETECTED ==="
+            cat /tmp/actionlint-report.txt
           else
-            echo "valid=false" >> "$GITHUB_OUTPUT"
-            echo "TARGET INVALID - repair required"
+            echo "defects=false" >> "$GITHUB_OUTPUT"
+            echo "ALL WORKFLOWS VALID"
           fi
 
-      - name: Run Groq surgical repair
-        if: steps.precheck.outputs.valid == 'false'
+      - name: Run Groq repair
+        if: steps.detect.outputs.defects == 'true'
         continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           set -euo pipefail
+          python3 -m pip install --disable-pip-version-check groq
 
-          python3 .github/scripts/smart_maintenance.py \
-          "Repair ONLY .github/workflows/gemini-invoke.yml.
+          {
+            cat <<'EOF'
+          Fix the GitHub Actions workflow defects reported by actionlint below.
 
-          Evidence: the file is missing the required GitHub Actions keys
-          name:, on:, and jobs:, so it is not a valid workflow.
+          Rules:
+          - Repair ONLY the .github/workflows/*.yml files named in the report.
+          - Use the smallest justified changes that resolve the reported defects.
+          - Do NOT modify any other files.
+          - Do NOT rebuild the project and do NOT run the full test suite.
+          - Report VERIFIED_FIXED only with actual evidence.
+            Otherwise report UNABLE_TO_VERIFY.
 
-          Use repository evidence to determine the smallest justified repair:
-          turn it into a minimal valid GitHub Actions workflow with
-          name, on, and jobs keys.
+          actionlint report:
+          EOF
+            cat /tmp/actionlint-report.txt
+          } > /tmp/repair-prompt.txt
 
-          Modify ONLY .github/workflows/gemini-invoke.yml.
-          Do NOT modify any other file.
-          Do NOT rebuild the project.
-          Do NOT run the full test suite.
-          Do NOT refactor or clean unrelated code.
-          Report VERIFIED_FIXED only with actual evidence.
-          Otherwise report UNABLE_TO_VERIFY."
+          python3 .github/scripts/smart_maintenance.py "$(cat /tmp/repair-prompt.txt)"
 
-      - name: Verify only target changed
+      - name: Verify only workflows changed
         id: verify
-        if: always() && steps.precheck.outputs.valid == 'false'
+        if: always() && steps.detect.outputs.defects == 'true'
         run: |
           set -euo pipefail
           echo "=== GIT STATUS ==="
           git status --short -- . ':!.groq-repair/'
-          echo "=== TARGET DIFF ==="
-          git diff -- ".github/workflows/gemini-invoke.yml"
-
-          OTHER=$(git status --porcelain -- . ':!.groq-repair/' | grep -v "gemini-invoke.yml" || true)
-
+          OTHER=$(git status --porcelain -- . ':!.groq-repair/' | grep -v "\.github/workflows/" || true)
           if [ -n "$OTHER" ]; then
             echo "ERROR: OTHER FILES MODIFIED"
             echo "$OTHER"
@@ -94,7 +88,7 @@ jobs:
           fi
 
       - name: Commit and push repair
-        if: always() && steps.precheck.outputs.valid == 'false' && steps.verify.outcome == 'success'
+        if: always() && steps.detect.outputs.defects == 'true' && steps.verify.outcome == 'success'
         run: |
           set -euo pipefail
           if [ -z "$(git status --porcelain -- . ':!.groq-repair/')" ]; then
@@ -104,42 +98,26 @@ jobs:
           git config user.name "groq-repair-bot"
           git config user.email "actions@github.com"
           git checkout - 2>/dev/null || true
-          git add -- ".github/workflows/gemini-invoke.yml"
-          git commit -m "fix: auto-repair gemini-invoke.yml [skip ci]"
+          git add -- .github/workflows
+          git commit -m "fix: auto-repair workflow defects [skip ci]"
           git push
 
-      - name: Targeted validation
+      - name: Final validation
         if: always()
         run: |
           set -euo pipefail
-
-          python3 - <<'PY'
-          import sys
-
-          path = ".github/workflows/gemini-invoke.yml"
-
-          with open(path, "r", encoding="utf-8") as f:
-              text = f.read()
-
-          print("TARGET:", path)
-          print("SIZE:", len(text), "bytes")
-
-          missing = [
-              x for x in ["name:", "on:", "jobs:"]
-              if x not in text
-          ]
-
-          if missing:
-              print("MISSING:", missing)
-              print("TARGETED_VALIDATION=FAILED")
-              sys.exit(51)
-
-          print("TARGETED_VALIDATION=BASIC_STRUCTURE_PRESENT")
-          PY
-
-      - name: Final evidence
-        if: always()
-        run: |
-          echo "BUILD=NOT_RUN"
-          echo "FULL_TEST_SUITE=NOT_RUN"
-          echo "TARGET=.github/workflows/gemini-invoke.yml"
+          /tmp/actionlint -no-color .github/workflows/*.yml > /tmp/new-report.txt 2>&1 || true
+          OLD=$(grep -cE ':[0-9]+:[0-9]+: ' /tmp/actionlint-report.txt || true)
+          NEW=$(grep -cE ':[0-9]+:[0-9]+: ' /tmp/new-report.txt || true)
+          echo "ERRORS_BEFORE=$OLD"
+          echo "ERRORS_AFTER=$NEW"
+          if [ "$NEW" -eq 0 ] && [ "$OLD" -eq 0 ]; then
+            echo "RESULT=ALL_VALID"
+          elif [ "$NEW" -eq 0 ]; then
+            echo "RESULT=ALL_DEFECTS_FIXED"
+          elif [ "$NEW" -lt "$OLD" ]; then
+            echo "RESULT=PROGRESS_MADE"
+          else
+            echo "RESULT=NO_IMPROVEMENT"
+            exit 51
+          fi

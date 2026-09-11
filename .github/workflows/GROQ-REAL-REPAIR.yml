@@ -1,7 +1,9 @@
 name: GROQ Real Repair Capability
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - groq-real-repair-test
 
 permissions:
   contents: write
@@ -11,19 +13,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Install Groq
-        run: python3 -m pip install --disable-pip-version-check groq
+        run: |
+          python3 -m pip install --disable-pip-version-check groq
 
       - name: GROQ REAL REPAIR
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           set -e
-          python3 .github/scripts/smart_maintenance.py             "Repair only GROQ_REPAIR_TEST.py. It contains a real Python syntax error: the print call in main() is missing its closing parenthesis. Fix only this file. Do not modify any other file. Do not build the project. Do not run the full test suite."
+          python3 .github/scripts/smart_maintenance.py             "Repair only GROQ_REPAIR_TEST.py. The real Python syntax error is a missing closing parenthesis in the print call inside main(). Fix only this file. Do not modify any other file. Do not build the project. Do not run the full test suite."
 
       - name: TARGETED VERIFY
         run: |
@@ -33,7 +37,7 @@ jobs:
           echo "FULL_TEST=OFF"
           echo "REBUILD=OFF"
 
-      - name: SHOW DIFF
+      - name: DIFF
         run: |
           git status --short
           git diff -- GROQ_REPAIR_TEST.py

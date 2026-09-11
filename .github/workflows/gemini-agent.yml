@@ -15,7 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          token: ${{ secrets.GH_WORKFLOW_PAT }}
           fetch-depth: 0
 
       - uses: google-github-actions/run-gemini-cli@v0

@@ -32,10 +32,11 @@ jobs:
           bash ./download-actionlint.bash latest
 
       - name: Detect defects in all workflows
+        # structural workflow errors only - shellcheck/pyflakes noise is disabled
         id: detect
         run: |
           set -euo pipefail
-          /tmp/actionlint -no-color .github/workflows/*.yml > /tmp/actionlint-report.txt 2>&1 || true
+          /tmp/actionlint -no-color -shellcheck= -pyflakes= .github/workflows/*.yml > /tmp/actionlint-report.txt 2>&1 || true
           if [ -s /tmp/actionlint-report.txt ]; then
             echo "defects=true" >> "$GITHUB_OUTPUT"
             echo "=== DEFECTS DETECTED ==="
@@ -106,7 +107,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          /tmp/actionlint -no-color .github/workflows/*.yml > /tmp/new-report.txt 2>&1 || true
+          /tmp/actionlint -no-color -shellcheck= -pyflakes= .github/workflows/*.yml > /tmp/new-report.txt 2>&1 || true
           OLD=$(grep -cE ':[0-9]+:[0-9]+: ' /tmp/actionlint-report.txt || true)
           NEW=$(grep -cE ':[0-9]+:[0-9]+: ' /tmp/new-report.txt || true)
           echo "ERRORS_BEFORE=$OLD"

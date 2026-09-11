@@ -1,0 +1,113 @@
+name: KHALED - Groq Gemini Self Repair Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  surgical-repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Groq SDK
+        run: python -m pip install --disable-pip-version-check groq
+
+      - name: Verify target evidence
+        run: |
+          set -euo pipefail
+          test -f ".github/workflows/gemini-invoke.yml"
+          echo "TARGET=.github/workflows/gemini-invoke.yml"
+          cat ".github/workflows/gemini-invoke.yml"
+
+      - name: Run Groq surgical repair
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          python3 .github/scripts/smart_maintenance.py \
+          "Repair ONLY .github/workflows/gemini-invoke.yml.
+
+          Evidence: the file is 42 bytes and contains only:
+          .github/workflows/gemini-plan-execute.yml
+
+          name, on, and jobs are missing.
+
+          Use repository evidence to determine the smallest justified repair.
+
+          Modify ONLY .github/workflows/gemini-invoke.yml.
+          Do NOT modify any other file.
+          Do NOT rebuild the project.
+          Do NOT run the full test suite.
+          Do NOT refactor or clean unrelated code.
+          Create a backup before editing.
+          Inspect the final diff.
+          Perform only targeted YAML/workflow validation.
+          Report VERIFIED_FIXED only with actual evidence.
+          Otherwise report UNABLE_TO_VERIFY."
+
+      - name: Verify only target changed
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "=== GIT STATUS ==="
+          git status --short
+          echo "=== TARGET DIFF ==="
+          git diff -- ".github/workflows/gemini-invoke.yml"
+
+          OTHER=$(git status --porcelain | grep -v "gemini-invoke.yml" || true)
+
+          if [ -n "$OTHER" ]; then
+            echo "ERROR: OTHER FILES MODIFIED"
+            echo "$OTHER"
+            exit 50
+          fi
+
+      - name: Targeted validation
+        if: always()
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import sys
+
+          path = ".github/workflows/gemini-invoke.yml"
+
+          with open(path, "r", encoding="utf-8") as f:
+              text = f.read()
+
+          print("TARGET:", path)
+          print("SIZE:", len(text), "bytes")
+
+          missing = [
+              x for x in ["name:", "on:", "jobs:"]
+              if x not in text
+          ]
+
+          if missing:
+              print("MISSING:", missing)
+              print("TARGETED_VALIDATION=FAILED")
+              sys.exit(51)
+
+          print("TARGETED_VALIDATION=BASIC_STRUCTURE_PRESENT")
+          PY
+
+      - name: Final evidence
+        if: always()
+        run: |
+          echo "BUILD=NOT_RUN"
+          echo "FULL_TEST_SUITE=NOT_RUN"
+          echo "TARGET=.github/workflows/gemini-invoke.yml"

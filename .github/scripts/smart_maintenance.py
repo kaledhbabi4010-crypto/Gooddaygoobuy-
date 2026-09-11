@@ -1085,9 +1085,7 @@ def main() -> None:
                         and "EXIT_CODE=0"
                         in result
                     ):
-
                         successful_command_observed = True
-                    if write_observed:
                         verification_after_write_observed = True
 
                     round_record[

@@ -48,7 +48,6 @@ jobs:
 
       - name: 🚑 إصلاح تلقائي بالذكاء الاصطناعي
         if: failure()
-        uses: mariorazo97/ai-ci-healer@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           llm-provider: "groq"

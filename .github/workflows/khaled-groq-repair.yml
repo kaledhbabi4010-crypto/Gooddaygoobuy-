@@ -5,12 +5,19 @@ on:
     branches:
       - khaled-gemini-direct-fix
   workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
 
 permissions:
   contents: write
 
+concurrency:
+  group: khaled-groq-repair
+  cancel-in-progress: false
+
 jobs:
   repair:
+    if: "!contains(github.event.head_commit.message, '[skip-repair]')"
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -21,175 +28,235 @@ jobs:
           ref: khaled-gemini-direct-fix
           fetch-depth: 0
 
-      - name: Collect TARGETED Gemini Self-Repair context
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Collect targeted repair context
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           echo '=== TARGETED FILE DISCOVERY ==='
-          find . -type f \-not -path './.git/*' \ | grep -Ei 'gemini|self.?repair|repair' | head -100 > /tmp/targets.txt || true
-          cat /tmp/targets.txt
+          find . -type f -not -path './.git/*' \
+            | grep -Ei 'gemini|self.?repair|repair' \
+            | head -100 > /tmp/targets.txt || true
+          cat /tmp/targets.txt || true
 
           : > /tmp/context.txt
           while IFS= read -r f; do
             [ -f "$f" ] || continue
-            echo '' >> /tmp/context.txt
-            echo "===== FILE: $f =====" >> /tmp/context.txt
-            sed -n '1,240p' "$f" >> /tmp/context.txt || true
+            {
+              echo ''
+              echo "===== FILE: $f ====="
+              sed -n '1,240p' "$f" || true
+            } >> /tmp/context.txt
           done < /tmp/targets.txt
-
-          echo '=== CONTEXT SIZE BEFORE CAP ==='
-          wc -c /tmp/context.txt
 
           head -c 16000 /tmp/context.txt > /tmp/context-limited.txt
           mv /tmp/context-limited.txt /tmp/context.txt
-
           echo '=== CONTEXT SIZE SENT TO GROQ ==='
           wc -c /tmp/context.txt
 
-      - name: Real pre-repair build evidence
+      - name: Detect build system
+        id: detect
         shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f gradlew ]; then
+            echo "kind=gradle" >> "$GITHUB_OUTPUT"
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          elif gw=$(find . -name gradlew -not -path './.git/*' | head -1) && [ -n "$gw" ]; then
+            echo "kind=gradle" >> "$GITHUB_OUTPUT"
+            echo "dir=$(dirname "$gw")" >> "$GITHUB_OUTPUT"
+          elif find . \( -name '*.sln' -o -name '*.csproj' \) -not -path './.git/*' | grep -q .; then
+            echo "kind=dotnet" >> "$GITHUB_OUTPUT"
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=none" >> "$GITHUB_OUTPUT"
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+      - name: Pre-repair build evidence
+        id: before
+        shell: bash
+        env:
+          KIND: ${{ steps.detect.outputs.kind }}
+          DIR: ${{ steps.detect.outputs.dir }}
         run: |
           set +e
           : > /tmp/build-before.txt
-
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew test --no-daemon 2>&1 | tee /tmp/build-before.txt
-            echo "GRADLE_EXIT=${PIPESTATUS[0]}" >> /tmp/build-before.txt
-          elif find . -name '*.sln' -o -name '*.csproj' | grep -q .; then
-            dotnet restore 2>&1 | tee /tmp/build-before.txt
-            dotnet build --no-restore 2>&1 | tee -a /tmp/build-before.txt
-            echo "DOTNET_EXIT=${PIPESTATUS[0]}" >> /tmp/build-before.txt
+          code=0
+          if [ "$KIND" = "gradle" ]; then
+            ( cd "$DIR" && chmod +x gradlew && ./gradlew build --no-daemon --stacktrace ) 2>&1 | tee /tmp/build-before.txt
+            code=${PIPESTATUS[0]}
+          elif [ "$KIND" = "dotnet" ]; then
+            dotnet build 2>&1 | tee /tmp/build-before.txt
+            code=${PIPESTATUS[0]}
           else
             echo 'NO_SUPPORTED_BUILD_SYSTEM_FOUND' | tee /tmp/build-before.txt
+            code=0
           fi
-
+          echo "PRE_REPAIR_EXIT=$code" | tee -a /tmp/build-before.txt
+          echo "code=$code" >> "$GITHUB_OUTPUT"
           tail -n 120 /tmp/build-before.txt
+          exit 0
 
-      - name: Ask Groq for minimal unified diff
+      - name: Ask Groq for a minimal unified diff
+        id: groq
+        if: steps.before.outputs.code != '0'
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         shell: bash
         run: |
+          set -euo pipefail
+          if [ -z "${GROQ_API_KEY:-}" ]; then
+            echo '::warning::GROQ_API_KEY secret is missing - skipping AI repair'
+            exit 0
+          fi
           python - <<'PY'
           import os, json, urllib.request
 
-          key = os.environ.get('GROQ_API_KEY','').strip()
-          if not key:
-              raise SystemExit('GROQ_API_KEY secret is missing')
-
+          key = os.environ['GROQ_API_KEY'].strip()
           context = open('/tmp/context.txt', encoding='utf-8', errors='ignore').read()
           evidence = open('/tmp/build-before.txt', encoding='utf-8', errors='ignore').read()[-9000:]
 
-          prompt = '''You are KHALED's repair engineer.
-
-Repair ONLY the Gemini Self-Repair implementation.
-
-Rules:
-1. Do not redesign the project.
-2. Do not modify unrelated files.
-3. Do not invent APIs or test results.
-4. Preserve existing architecture.
-5. Fix only concrete defects visible in the supplied files/evidence.
-6. Return ONLY a unified git diff.
-7. The diff must use existing repository paths.
-8. If there is not enough evidence for a safe fix, return an empty diff.
-
-TARGETED SOURCE FILES:
-''' + context + '''
-
-REAL PRE-REPAIR BUILD/TEST EVIDENCE:
-''' + evidence + '''
-
-Return ONLY the patch beginning with diff --git, or return EMPTY if no safe repair is justified.
-'''
+          prompt = (
+              "You are KHALED's repair engineer.\n\n"
+              "Rules:\n"
+              "1. Do not redesign the project.\n"
+              "2. Do not modify unrelated files.\n"
+              "3. Do not invent APIs or test results.\n"
+              "4. Preserve existing architecture.\n"
+              "5. Fix only concrete defects visible in the supplied files/evidence.\n"
+              "6. Return ONLY a unified git diff.\n"
+              "7. The diff must use existing repository paths.\n"
+              "8. If there is not enough evidence for a safe fix, return EMPTY.\n\n"
+              "TARGETED SOURCE FILES:\n" + context +
+              "\n\nREAL PRE-REPAIR BUILD EVIDENCE:\n" + evidence +
+              "\n\nReturn ONLY the patch beginning with 'diff --git', or EMPTY.\n"
+          )
 
           payload = {
-              'model': 'openai/gpt-oss-120b',
-              'messages': [
-                  {'role':'user','content':prompt}
-              ],
+              'model': os.environ.get('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+              'messages': [{'role': 'user', 'content': prompt}],
               'temperature': 0.1,
-              'max_tokens': 1800
+              'max_tokens': 4000,
           }
 
           req = urllib.request.Request(
               'https://api.groq.com/openai/v1/chat/completions',
               data=json.dumps(payload).encode(),
-              headers={
-                  'Authorization':'Bearer '+key,
-                  'Content-Type':'application/json'
-              },
-              method='POST'
+              headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
+              method='POST',
           )
 
           try:
-              with urllib.request.urlopen(req, timeout=120) as resp:
-                  data=json.loads(resp.read().decode())
+              with urllib.request.urlopen(req, timeout=180) as resp:
+                  data = json.loads(resp.read().decode())
+              text = data['choices'][0]['message']['content']
           except Exception as e:
-              raise SystemExit('GROQ_REQUEST_FAILED: '+str(e))
+              print('::warning::GROQ_REQUEST_FAILED: %s' % e)
+              text = ''
 
-          text = data['choices'][0]['message']['content']
-          open('/tmp/groq.patch','w',encoding='utf-8').write(text)
+          if '```' in text:
+              parts = text.split('```')
+              text = max(parts, key=len)
+              if text.startswith('diff\n'):
+                  text = text[5:]
 
-          print('=== GROQ RESPONSE SIZE ===')
-          print(len(text))
-          print(text[:5000])
+          open('/tmp/groq.patch', 'w', encoding='utf-8').write(text)
+          print('=== GROQ RESPONSE SIZE ===', len(text))
+          print(text[:3000])
           PY
 
-      - name: Validate and apply Groq patch
+      - name: Apply patch if valid
+        id: apply
+        if: steps.before.outputs.code != '0'
         shell: bash
         run: |
-          set -e
-          if grep -q '^diff --git ' /tmp/groq.patch; then
-            git apply --check /tmp/groq.patch
-            git apply /tmp/groq.patch
-            git diff --check
+          set -euo pipefail
+          applied=false
+          if [ -f /tmp/groq.patch ] && grep -q '^diff --git ' /tmp/groq.patch; then
+            if git apply --check /tmp/groq.patch 2>/tmp/apply.err; then
+              git apply /tmp/groq.patch
+              applied=true
+            else
+              echo '::warning::PATCH_DID_NOT_APPLY'
+              cat /tmp/apply.err || true
+            fi
           else
             echo 'NO_VALID_PATCH_RETURNED'
           fi
-
-          echo '=== MODIFIED FILES ==='
+          echo "applied=$applied" >> "$GITHUB_OUTPUT"
           git status --short
 
-      - name: Real post-repair build/test
+      - name: Post-repair build
+        id: after
+        if: steps.apply.outputs.applied == 'true'
         shell: bash
+        env:
+          KIND: ${{ steps.detect.outputs.kind }}
+          DIR: ${{ steps.detect.outputs.dir }}
         run: |
           set +e
           : > /tmp/build-after.txt
-
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew test --no-daemon 2>&1 | tee /tmp/build-after.txt
+          code=0
+          if [ "$KIND" = "gradle" ]; then
+            ( cd "$DIR" && chmod +x gradlew && ./gradlew build --no-daemon --stacktrace ) 2>&1 | tee /tmp/build-after.txt
             code=${PIPESTATUS[0]}
-          elif find . -name '*.sln' -o -name '*.csproj' | grep -q .; then
-            dotnet restore 2>&1 | tee /tmp/build-after.txt
-            dotnet build --no-restore 2>&1 | tee -a /tmp/build-after.txt
+          elif [ "$KIND" = "dotnet" ]; then
+            dotnet build 2>&1 | tee /tmp/build-after.txt
             code=${PIPESTATUS[0]}
-          else
-            echo 'NO_SUPPORTED_BUILD_SYSTEM_FOUND' | tee /tmp/build-after.txt
-            code=2
           fi
-
-          echo 'POST_REPAIR_EXIT='$code
+          echo "POST_REPAIR_EXIT=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
           tail -n 160 /tmp/build-after.txt
-          exit $code
+          exit 0
 
-      - name: Commit ONLY verified repair
+      - name: Commit verified repair
+        if: steps.after.outputs.code == '0'
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          git status --short
-          git diff --check
-
           if git diff --quiet; then
             echo 'NO_SOURCE_CHANGES_TO_COMMIT'
             exit 0
           fi
-
           git add -u
-          git commit -m 'KHALED: verified targeted Groq Gemini self-repair'
+          git commit -m 'KHALED: verified targeted Groq repair [skip-repair]'
           git push origin HEAD:khaled-gemini-direct-fix
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: khaled-groq-repair-evidence
+          if-no-files-found: ignore
+          path: |
+            /tmp/build-before.txt
+            /tmp/build-after.txt
+            /tmp/groq.patch
+            /tmp/context.txt
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "Pre-repair exit: ${{ steps.before.outputs.code }}"
+          echo "Patch applied:   ${{ steps.apply.outputs.applied }}"
+          echo "Post-repair exit:${{ steps.after.outputs.code }}"

@@ -46,14 +46,14 @@ jobs:
             exit 1
           fi
 
-      - name: 🚑 إصلاح تلقائي بالذكاء الاصطناعي
+      - name: 🚑 KHALED GROQ REAL REPAIR
         if: failure()
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          llm-provider: "groq"
-          groq-api-key: ${{ secrets.GROQ_API_KEY }}
-          confidence-threshold: 60
-          enable-comments: true
+        shell: bash
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/smart_maintenance.py
 
 
       # ============================================================

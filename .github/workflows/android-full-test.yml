@@ -106,7 +106,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
           disable-animations: false
           script: |
-            set -euo pipefail
+            set -eu
             mkdir -p evidence
             ADB="$ANDROID_HOME/platform-tools/adb"
 

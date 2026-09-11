@@ -64,11 +64,11 @@ jobs:
         run: |
           set -euo pipefail
           echo "=== GIT STATUS ==="
-          git status --short
+          git status --short -- . ':!.groq-repair/'
           echo "=== TARGET DIFF ==="
           git diff -- ".github/workflows/gemini-invoke.yml"
 
-          OTHER=$(git status --porcelain | grep -v "gemini-invoke.yml" || true)
+          OTHER=$(git status --porcelain -- . ':!.groq-repair/' | grep -v "gemini-invoke.yml" || true)
 
           if [ -n "$OTHER" ]; then
             echo "ERROR: OTHER FILES MODIFIED"

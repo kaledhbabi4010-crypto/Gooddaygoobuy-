@@ -776,6 +776,52 @@ def _compact_messages_for_groq(messages, max_chars=24000):
 
     return out
 
+def compact_groq_messages(
+    messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """
+    Keep Groq request context bounded.
+    Preserve system message and newest conversation/tool context.
+    """
+    MAX_MESSAGE_CHARS = 2200
+    MAX_MESSAGES = 8
+
+    if not messages:
+        return messages
+
+    def compact_message(message):
+        if not isinstance(message, dict):
+            return message
+
+        out = dict(message)
+
+        content = out.get("content")
+
+        if isinstance(content, str) and len(content) > MAX_MESSAGE_CHARS:
+            out["content"] = (
+                content[:MAX_MESSAGE_CHARS]
+                + "\n[CONTEXT_TRUNCATED_BY_GROQ_REPAIR_ENGINE]"
+            )
+
+        return out
+
+    # Always preserve system message.
+    system = []
+    rest = messages
+
+    if isinstance(messages[0], dict) and messages[0].get("role") == "system":
+        system = [compact_message(messages[0])]
+        rest = messages[1:]
+
+    # Keep newest messages because they contain the current tool result/error.
+    recent = rest[-MAX_MESSAGES:]
+
+    return system + [
+        compact_message(message)
+        for message in recent
+    ]
+
+
 def ask_groq(
     model: str,
     messages: list[dict[str, Any]]
@@ -790,9 +836,11 @@ def ask_groq(
 
     for attempt in range(1, 4):
         try:
+            compact_messages = compact_groq_messages(messages)
+
             return client.chat.completions.create(
                 model=model,
-                messages=messages,
+                messages=compact_messages,
                 tools=TOOLS,
                 tool_choice="auto",
                 temperature=0,

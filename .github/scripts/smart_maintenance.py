@@ -1081,6 +1081,7 @@ def main() -> None:
 
                     if (
                         name == "run_command"
+                        and write_observed
                         and "EXIT_CODE=0"
                         in result
                     ):
@@ -1227,7 +1228,11 @@ def main() -> None:
         "git_diff"
     ] = git_diff()
 
-    if successful_command_observed:
+    if (
+        write_observed
+        and verification_after_write_observed
+        and successful_command_observed
+    ):
         evidence[
             "final_status"
         ] = "VERIFIED_FIXED"

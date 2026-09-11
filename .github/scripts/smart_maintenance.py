@@ -1,121 +1,1212 @@
+from __future__ import annotations
+
 import os
-import requests
-import base64
+import sys
+import json
+import subprocess
+import hashlib
+import shutil
+from pathlib import Path
+from datetime import datetime, timezone
+
 from groq import Groq
 
-def main():
-    groq_key = os.environ.get('GROQ_API_KEY', '').strip()
-    token = os.environ.get('GITHUB_TOKEN', '').strip()
-    repo = os.environ.get('GITHUB_REPOSITORY', '').strip()
-    branch = os.environ.get('GITHUB_REF_NAME', 'main').strip()
-    
-    if not groq_key:
-        return
 
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-    client = Groq(api_key=groq_key)
-    
-    # 1. جلب قائمة الملفات في المجلد الرئيسي للمستودع
-    url = f"https://api.github.com/repos/{repo}/contents/?ref={branch}"
-    res = requests.get(url, headers=headers)
-    if res.status_code != 200:
-        return
-        
-    items = res.json()
-    # نستهدف فقط الملفات (وليس المجلدات) وذات الامتدادات البرمجية أو النصية
-    target_files = [
-        item['name'] for item in items 
-        if item['type'] == 'file' and item['name'].endswith(('.py', '.js', '.java', '.kt', '.gradle', '.md', '.json', '.yml', '.yaml'))
-    ]
+# ============================================================
+# CONFIG
+# ============================================================
 
-    fixed_count = 0
-    log_entries = []
+ROOT = Path.cwd().resolve()
 
-    # 2. فحص وإصلاح كل ملف مستهدف
-    for file_name in target_files:
-        file_url = f"https://api.github.com/repos/{repo}/contents/{file_name}?ref={branch}"
-        file_res = requests.get(file_url, headers=headers)
-        if file_res.status_code != 200:
+STATE_DIR = ROOT / ".groq-repair"
+BACKUP_DIR = STATE_DIR / "backup"
+
+STATE_DIR.mkdir(exist_ok=True)
+BACKUP_DIR.mkdir(exist_ok=True)
+
+API_KEY = os.environ.get("GROQ_API_KEY")
+
+if not API_KEY:
+    raise SystemExit(
+        "ERROR: GROQ_API_KEY environment variable is missing."
+    )
+
+REQUESTED_MODEL = os.environ.get(
+    "GROQ_MODEL",
+    "openai/gpt-oss-120b"
+)
+
+MAX_ROUNDS = int(
+    os.environ.get("GROQ_MAX_ROUNDS", "6")
+)
+
+COMMAND_TIMEOUT = int(
+    os.environ.get("GROQ_COMMAND_TIMEOUT", "180")
+)
+
+MAX_FILE_SIZE = 400_000
+
+
+IGNORED_DIRS = {
+    ".git",
+    ".groq-repair",
+    "node_modules",
+    "bin",
+    "obj",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".next",
+    "dist",
+    "build",
+    "target",
+    ".idea",
+    ".vs",
+}
+
+
+client = Groq(api_key=API_KEY)
+
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+def log(message: str) -> None:
+
+    line = (
+        f"[{datetime.now(timezone.utc).isoformat()}] "
+        f"{message}"
+    )
+
+    print(line, flush=True)
+
+    with (STATE_DIR / "repair.log").open(
+        "a",
+        encoding="utf-8"
+    ) as file:
+
+        file.write(line + "\n")
+
+
+# ============================================================
+# PATH SAFETY
+# ============================================================
+
+def relative_path(path: Path) -> str:
+
+    return str(
+        path.relative_to(ROOT)
+    ).replace("\\", "/")
+
+
+def safe_path(relative: str) -> Path:
+
+    path = (ROOT / relative).resolve()
+
+    if path != ROOT and ROOT not in path.parents:
+        raise ValueError(
+            "Path escapes repository root."
+        )
+
+    return path
+
+
+def is_ignored(path: Path) -> bool:
+
+    return any(
+        part in IGNORED_DIRS
+        for part in path.parts
+    )
+
+
+# ============================================================
+# PROJECT STRUCTURE
+# ============================================================
+
+def project_structure() -> str:
+
+    files = []
+
+    for path in sorted(ROOT.rglob("*")):
+
+        if is_ignored(path):
             continue
-            
-        data = file_res.json()
-        content = base64.b64decode(data["content"]).decode("utf-8")
-        sha = data["sha"]
 
-        # 3. الأمر الصارم لـ Groq لإصلاح الملفات التالفة
-        prompt = f"""أنت خبير في إصلاح الأكواد والملفات التالفة.
-الملف التالي قد يحتوي على أخطاء في الصياغة (Syntax Errors)، أقواس مفقودة، أو أخطاء منطقية.
+        if not path.is_file():
+            continue
 
-مهمتك:
-1. اكتشف الخطأ وأصلحه فوراً.
-2. أعد كتابة الملف كاملاً بشكل صحيح 100%.
-3. لا تكتب أي شروحات، لا تكتب "إليك الكود المصحح"، فقط ابدأ مباشرة بمحتوى الملف.
+        files.append(
+            relative_path(path)
+        )
 
-اسم الملف: {file_name}
-المحتوى الحالي:
-{content}
-"""
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=4096
+        if len(files) >= 6000:
+
+            files.append(
+                "... STRUCTURE TRUNCATED ..."
             )
-            new_content = response.choices[0].message.content.strip()
+
+            break
+
+    return "\n".join(files)
+
+
+# ============================================================
+# FILE READING
+# ============================================================
+
+def read_file(path_string: str) -> str:
+
+    path = safe_path(path_string)
+
+    if not path.is_file():
+
+        return (
+            f"ERROR: not a file: "
+            f"{path_string}"
+        )
+
+    if path.stat().st_size > MAX_FILE_SIZE:
+
+        return (
+            f"ERROR: file exceeds "
+            f"{MAX_FILE_SIZE} bytes: "
+            f"{path_string}"
+        )
+
+    return path.read_text(
+        encoding="utf-8",
+        errors="replace"
+    )
+
+
+# ============================================================
+# CODE SEARCH
+# ============================================================
+
+def search_codebase(pattern: str) -> str:
+
+    matches = []
+
+    query = pattern.lower()
+
+    for path in ROOT.rglob("*"):
+
+        if not path.is_file():
+            continue
+
+        if is_ignored(path):
+            continue
+
+        try:
+
+            if path.stat().st_size > MAX_FILE_SIZE:
+                continue
+
+            text = path.read_text(
+                encoding="utf-8",
+                errors="ignore"
+            )
+
+            if query in text.lower():
+
+                matches.append(
+                    relative_path(path)
+                )
+
+                if len(matches) >= 300:
+                    break
+
         except Exception:
             continue
 
-        # تنظيف الرد من علامات Markdown الزائدة
-        if new_content.startswith("```"):
-            lines = new_content.split("\n")
-            if lines[-1].strip() == "```":
-                lines = lines[1:-1]
-            else:
-                lines = lines[1:]
-            new_content = "\n".join(lines).strip()
+    if not matches:
 
-        # 4. الحفظ إذا تم الإصلاح
-        if new_content != content and len(new_content) > 50: # تأكد من أنه ليس رداً فارغاً
-            encoded = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
-            put_res = requests.put(file_url, headers=headers, json={
-                "message": f"🤖 إصلاح تلقائي لـ {file_name} [skip ci]",
-                "content": encoded,
-                "sha": sha,
-                "branch": branch
-            })
-            
-            if put_res.status_code in [200, 201]:
-                fixed_count += 1
-                log_entries.append(f"- ✅ تم إصلاح: `{file_name}`")
+        return "NO_MATCHES"
 
-    # 5. كتابة سجل الإصلاحات لكي تعرف ما حدث
-    if fixed_count > 0:
-        log_content = f"""# 📋 سجل الإصلاحات التلقائية
+    return "\n".join(matches)
 
-تم فحص الملفات وإصلاح الأخطاء التالفة تلقائياً.
 
-## الملفات التي تم إصلاحها:
-{chr(10).join(log_entries)}
+# ============================================================
+# COMMAND EXECUTION
+# ============================================================
 
----
-*تم التوليد بواسطة نظام الماسح والمصلح الذكي*
+def run_command(command: str) -> str:
+
+    lowered = command.lower()
+
+    blocked_commands = (
+        "rm -rf /",
+        "rm -rf *",
+        "mkfs",
+        "diskpart",
+        "format c:",
+        "shutdown",
+        "reboot",
+        "git push --force",
+        "git reset --hard",
+        "git clean -fd",
+        "del /s /q c:\\",
+    )
+
+    for blocked in blocked_commands:
+
+        if blocked in lowered:
+
+            return (
+                "BLOCKED: destructive command "
+                "is not permitted."
+            )
+
+    try:
+
+        process = subprocess.run(
+            command,
+            cwd=ROOT,
+            shell=True,
+            text=True,
+            capture_output=True,
+            timeout=COMMAND_TIMEOUT,
+        )
+
+        output = (
+            process.stdout or ""
+        ) + (
+            process.stderr or ""
+        )
+
+        if len(output) > 50_000:
+
+            output = output[-50_000:]
+
+        return (
+            f"EXIT_CODE={process.returncode}\n"
+            f"{output}"
+        )
+
+    except subprocess.TimeoutExpired:
+
+        return (
+            f"TIMEOUT after "
+            f"{COMMAND_TIMEOUT} seconds"
+        )
+
+    except Exception as exc:
+
+        return (
+            f"COMMAND_ERROR: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+
+# ============================================================
+# BACKUP
+# ============================================================
+
+def backup_file(path_string: str) -> None:
+
+    source = safe_path(path_string)
+
+    if not source.is_file():
+        return
+
+    destination = (
+        BACKUP_DIR / path_string
+    )
+
+    destination.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    shutil.copy2(
+        source,
+        destination
+    )
+
+
+# ============================================================
+# FILE WRITING
+# ============================================================
+
+def write_file(
+    path_string: str,
+    content: str
+) -> str:
+
+    path = safe_path(path_string)
+
+    if path.exists():
+
+        backup_file(path_string)
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    temporary = path.with_name(
+        path.name + ".groq-tmp"
+    )
+
+    temporary.write_text(
+        content,
+        encoding="utf-8"
+    )
+
+    temporary.replace(path)
+
+    return (
+        f"WRITE_OK: {path_string}"
+    )
+
+
+# ============================================================
+# GIT DIFF
+# ============================================================
+
+def git_diff() -> str:
+
+    try:
+
+        process = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+        output = (
+            process.stdout or ""
+        ) + (
+            process.stderr or ""
+        )
+
+        if len(output) > 80_000:
+
+            output = output[-80_000:]
+
+        return output
+
+    except Exception as exc:
+
+        return (
+            f"GIT_DIFF_ERROR: {exc}"
+        )
+
+
+# ============================================================
+# SNAPSHOT
+# ============================================================
+
+def snapshot() -> dict[str, str]:
+
+    result = {}
+
+    for path in ROOT.rglob("*"):
+
+        if not path.is_file():
+            continue
+
+        if is_ignored(path):
+            continue
+
+        try:
+
+            digest = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+
+            result[
+                relative_path(path)
+            ] = digest
+
+        except Exception:
+            continue
+
+    return result
+
+
+# ============================================================
+# SAFETY BRANCH
+# ============================================================
+
+def create_safety_branch() -> None:
+
+    try:
+
+        check = subprocess.run(
+            [
+                "git",
+                "rev-parse",
+                "--is-inside-work-tree",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+        if check.returncode != 0:
+
+            log(
+                "Not a Git repository. "
+                "Continuing without safety branch."
+            )
+
+            return
+
+        branch_name = (
+            "groq-root-repair-"
+            + datetime.now().strftime(
+                "%Y%m%d-%H%M%S"
+            )
+        )
+
+        process = subprocess.run(
+            [
+                "git",
+                "checkout",
+                "-b",
+                branch_name,
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+        if process.returncode == 0:
+
+            log(
+                f"SAFETY BRANCH CREATED: "
+                f"{branch_name}"
+            )
+
+        else:
+
+            log(
+                "WARNING: safety branch "
+                "could not be created."
+            )
+
+    except Exception as exc:
+
+        log(
+            f"Git safety branch error: {exc}"
+        )
+
+
+# ============================================================
+# GROQ TOOLS
+# ============================================================
+
+TOOLS = [
+
+    {
+        "type": "function",
+        "function": {
+            "name": "list_structure",
+            "description": (
+                "List repository files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": (
+                "Read a text file inside "
+                "the repository."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    }
+                },
+                "required": ["path"],
+            },
+        },
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "search_codebase",
+            "description": (
+                "Search repository files "
+                "for a text pattern."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string"
+                    }
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": (
+                "Run a diagnostic, build, "
+                "or test command."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string"
+                    }
+                },
+                "required": ["command"],
+            },
+        },
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "Create or replace a repository "
+                "text file. Existing files are "
+                "backed up first."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    },
+                    "content": {
+                        "type": "string"
+                    },
+                },
+                "required": [
+                    "path",
+                    "content"
+                ],
+            },
+        },
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "git_diff",
+            "description": (
+                "Show current Git changes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+]
+
+
+# ============================================================
+# SYSTEM CONTRACT
+# ============================================================
+
+SYSTEM_PROMPT = r"""
+You are GROQ ROOT REPAIR ENGINE.
+
+You are operating on a REAL software repository.
+
+EVIDENCE IS THE HIGHEST PRIORITY.
+
+Your task is to diagnose and repair real repository
+problems from their root cause.
+
+MANDATORY PROCESS:
+
+1. Inspect repository structure.
+2. Reproduce or inspect the reported failure.
+3. Read relevant source/configuration files.
+4. Search for callers, dependencies and related code.
+5. Form a root-cause hypothesis.
+6. Gather evidence supporting or rejecting it.
+7. Only then modify files.
+8. Run the appropriate build/test/runtime verification.
+9. If verification fails, analyze the new evidence.
+10. Repair again when justified.
+11. Never invent results.
+
+IMPORTANT:
+
+A generated patch is NOT proof.
+
+A successful file write is NOT proof.
+
+An AI explanation is NOT proof.
+
+A successful compilation is not automatically proof of
+runtime correctness.
+
+SUCCESS requires executable verification relevant to
+the reported problem.
+
+Never fabricate:
+
+- command output
+- test results
+- build results
+- files
+- repository state
+- external service results
+- successful fixes
+
+SECURITY:
+
+- Never read secrets from files unless explicitly required
+  for the diagnosed application behavior.
+- Never print API keys.
+- Never put secrets into files.
+- Never commit or push automatically.
+- Never force push.
+- Never use git reset --hard.
+- Never use git clean -fd.
+- Never delete the repository.
+- Never operate outside the repository root.
+- Prefer minimal reversible changes.
+
+When verification cannot establish the fix, report:
+
+UNABLE_TO_VERIFY
+
+When verification proves the repair failed, report:
+
+VERIFICATION_FAILED
+
+Only report:
+
+VERIFIED_FIXED
+
+when the evidence actually proves the reported issue
+has been fixed.
+
+FINAL RESPONSE FORMAT:
+
+ROOT_CAUSE:
+...
+
+CHANGES:
+...
+
+VERIFICATION_COMMANDS:
+...
+
+VERIFICATION_RESULTS:
+...
+
+FINAL_STATUS:
+VERIFIED_FIXED
+
+or
+
+FINAL_STATUS:
+VERIFICATION_FAILED
+
+or
+
+FINAL_STATUS:
+UNABLE_TO_VERIFY
 """
-        log_url = f"https://api.github.com/repos/{repo}/contents/FIX_LOG.md"
-        
-        # التحقق مما إذا كان السجل موجوداً مسبقاً
-        check_log = requests.get(log_url, headers=headers)
-        log_sha = check_log.json().get("sha") if check_log.status_code == 200 else None
-        
-        log_data = {
-            "message": "📋 تحديث سجل الإصلاحات [skip ci]",
-            "content": base64.b64encode(log_content.encode("utf-8")).decode("utf-8"),
-            "branch": branch
+
+
+# ============================================================
+# MODEL DISCOVERY
+# ============================================================
+
+def select_model() -> str:
+
+    try:
+
+        available = client.models.list()
+
+        model_ids = {
+            model.id
+            for model in available.data
         }
-        if log_sha:
-            log_data["sha"] = log_sha
-            
-        requests.put(log_url, headers=headers, json=log_data)
+
+        if REQUESTED_MODEL in model_ids:
+
+            return REQUESTED_MODEL
+
+        fallbacks = (
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+        )
+
+        for candidate in fallbacks:
+
+            if candidate in model_ids:
+
+                log(
+                    "Requested model unavailable. "
+                    f"Using fallback: {candidate}"
+                )
+
+                return candidate
+
+        raise RuntimeError(
+            "No supported configured Groq model "
+            "was found."
+        )
+
+    except Exception as exc:
+
+        raise RuntimeError(
+            "Could not verify Groq model availability: "
+            f"{exc}"
+        )
+
+
+# ============================================================
+# GROQ REQUEST
+# ============================================================
+
+def ask_groq(
+    model: str,
+    messages: list[dict[str, Any]]
+):
+
+    return client.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=TOOLS,
+        tool_choice="auto",
+        temperature=0,
+    )
+
+
+# ============================================================
+# TOOL ROUTER
+# ============================================================
+
+def execute_tool(
+    name: str,
+    arguments: dict[str, Any]
+) -> str:
+
+    try:
+
+        if name == "list_structure":
+
+            return project_structure()
+
+        if name == "read_file":
+
+            return read_file(
+                arguments["path"]
+            )
+
+        if name == "search_codebase":
+
+            return search_codebase(
+                arguments["pattern"]
+            )
+
+        if name == "run_command":
+
+            command = arguments["command"]
+
+            result = run_command(command)
+
+            log(
+                "COMMAND:\n"
+                + command
+                + "\n"
+                + result
+            )
+
+            return result
+
+        if name == "write_file":
+
+            result = write_file(
+                arguments["path"],
+                arguments["content"]
+            )
+
+            log(result)
+
+            return result
+
+        if name == "git_diff":
+
+            return git_diff()
+
+        return (
+            f"UNKNOWN_TOOL: {name}"
+        )
+
+    except Exception as exc:
+
+        return (
+            f"TOOL_ERROR: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+
+# ============================================================
+# MAIN REPAIR ENGINE
+# ============================================================
+
+def main() -> None:
+
+    print()
+    print("=" * 72)
+    print(" GROQ ROOT REPAIR ENGINE")
+    print("=" * 72)
+    print()
+
+    model = select_model()
+
+    log(
+        f"Using Groq model: {model}"
+    )
+
+    create_safety_branch()
+
+    issue = " ".join(
+        sys.argv[1:]
+    ).strip()
+
+    if not issue:
+
+        issue = (
+            "Perform a repository health investigation. "
+            "Find reproducible build, test, or runtime "
+            "failures. Do not modify files until "
+            "evidence identifies a real problem."
+        )
+
+    evidence = {
+
+        "started": datetime.now(
+            timezone.utc
+        ).isoformat(),
+
+        "model": model,
+
+        "repository": str(ROOT),
+
+        "reported_problem": issue,
+
+        "initial_snapshot": snapshot(),
+
+        "rounds": [],
+
+        "final_status": (
+            "UNABLE_TO_VERIFY"
+        ),
+    }
+
+    messages = [
+
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT,
+        },
+
+        {
+            "role": "user",
+            "content": (
+                f"Repository:\n{ROOT}\n\n"
+                f"Reported problem:\n{issue}\n\n"
+                "Repository structure:\n"
+                f"{project_structure()}\n\n"
+                "Begin with evidence. "
+                "Do not guess."
+            ),
+        },
+    ]
+
+    successful_command_observed = False
+
+    explicit_verified = False
+
+    for round_number in range(
+        1,
+        MAX_ROUNDS + 1
+    ):
+
+        log(
+            f"========== ROUND "
+            f"{round_number}/{MAX_ROUNDS} =========="
+        )
+
+        round_record = {
+
+            "round": round_number,
+
+            "tools": [],
+        }
+
+        try:
+
+            response = ask_groq(
+                model,
+                messages
+            )
+
+            message = (
+                response.choices[0].message
+            )
+
+            messages.append(message)
+
+            if message.tool_calls:
+
+                for tool_call in (
+                    message.tool_calls
+                ):
+
+                    name = (
+                        tool_call.function.name
+                    )
+
+                    try:
+
+                        arguments = json.loads(
+                            tool_call.function.arguments
+                            or "{}"
+                        )
+
+                    except json.JSONDecodeError:
+
+                        arguments = {}
+
+                    log(
+                        "TOOL CALL: "
+                        f"{name}"
+                    )
+
+                    result = execute_tool(
+                        name,
+                        arguments
+                    )
+
+                    if (
+                        name == "run_command"
+                        and "EXIT_CODE=0"
+                        in result
+                    ):
+
+                        successful_command_observed = True
+
+                    round_record[
+                        "tools"
+                    ].append({
+
+                        "name": name,
+
+                        "arguments": arguments,
+
+                        "result": result[
+                            -20_000:
+                        ],
+                    })
+
+                    messages.append({
+
+                        "role": "tool",
+
+                        "tool_call_id":
+                            tool_call.id,
+
+                        "content": result,
+                    })
+
+                evidence[
+                    "rounds"
+                ].append(
+                    round_record
+                )
+
+                messages.append({
+
+                    "role": "user",
+
+                    "content": (
+                        "Continue using actual "
+                        "tool evidence. "
+                        "If code was changed, "
+                        "run the relevant "
+                        "verification now. "
+                        "Do not infer success."
+                    ),
+                })
+
+                continue
+
+            text = (
+                message.content or ""
+            )
+
+            round_record[
+                "assistant"
+            ] = text
+
+            evidence[
+                "rounds"
+            ].append(
+                round_record
+            )
+
+            print()
+            print(text)
+
+            lowered = text.lower()
+
+            if (
+                "final_status:"
+                in lowered
+                and
+                "verified_fixed"
+                in lowered
+            ):
+
+                explicit_verified = True
+
+            if not successful_command_observed:
+
+                messages.append({
+
+                    "role": "user",
+
+                    "content": (
+                        "Your response did not "
+                        "provide sufficient "
+                        "executable evidence. "
+                        "Continue using tools "
+                        "and run the appropriate "
+                        "build/test/verification "
+                        "command."
+                    ),
+                })
+
+            else:
+
+                messages.append({
+
+                    "role": "user",
+
+                    "content": (
+                        "Perform one final "
+                        "independent verification "
+                        "of the reported issue. "
+                        "Do not claim success "
+                        "unless the executable "
+                        "evidence proves it."
+                    ),
+                })
+
+        except Exception as exc:
+
+            error = (
+                f"{type(exc).__name__}: "
+                f"{exc}"
+            )
+
+            log(error)
+
+            round_record[
+                "error"
+            ] = error
+
+            evidence[
+                "rounds"
+            ].append(
+                round_record
+            )
+
+            break
+
+    evidence[
+        "final_snapshot"
+    ] = snapshot()
+
+    evidence[
+        "git_diff"
+    ] = git_diff()
+
+    if (
+        explicit_verified
+        and
+        successful_command_observed
+    ):
+
+        evidence[
+            "final_status"
+        ] = "VERIFIED_FIXED"
+
+    elif successful_command_observed:
+
+        evidence[
+            "final_status"
+        ] = "UNABLE_TO_VERIFY"
+
+    else:
+
+        evidence[
+            "final_status"
+        ] = "UNABLE_TO_VERIFY"
+
+    report = (
+        STATE_DIR / "evidence.json"
+    )
+
+    report.write_text(
+        json.dumps(
+            evidence,
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8"
+    )
+
+    print()
+    print("=" * 72)
+    print(" FINAL STATUS")
+    print("=" * 72)
+    print(
+        evidence["final_status"]
+    )
+    print()
+    print(
+        "Evidence:",
+        report
+    )
+    print()
+    print(
+        "No automatic commit or push was performed."
+    )
+
 
 if __name__ == "__main__":
+
     main()

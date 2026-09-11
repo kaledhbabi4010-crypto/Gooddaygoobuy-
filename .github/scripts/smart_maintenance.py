@@ -911,8 +911,6 @@ def execute_tool(
             return result
 
         if name == "write_file":
-            write_observed = True
-
             result = write_file(
                 arguments["path"],
                 arguments["content"]
@@ -965,10 +963,12 @@ def main() -> None:
     if not issue:
 
         issue = (
-            "Perform a repository health investigation. "
-            "Find reproducible build, test, or runtime "
-            "failures. Do not modify files until "
-            "evidence identifies a real problem."
+            "Perform a comprehensive repository repair and health verification. "
+            "Inspect all subprojects (Android gradle projects android_app and khaled_android, "
+            "C# .NET solution KHALED.sln, Python engines and scripts). "
+            "Find any build, compilation, test, or configuration failures across all repository files. "
+            "Identify why any previous repairs failed, diagnose root causes using actual command evidence, "
+            "and apply minimal targeted repairs to resolve all failures."
         )
 
     evidence = {
@@ -1022,6 +1022,7 @@ def main() -> None:
         1,
         MAX_ROUNDS + 1
     ):
+        global_write_observed = False
 
         log(
             f"========== ROUND "

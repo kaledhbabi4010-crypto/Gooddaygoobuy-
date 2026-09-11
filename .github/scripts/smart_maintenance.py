@@ -710,6 +710,10 @@ def select_model() -> str:
             return REQUESTED_MODEL
 
         fallbacks = (
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "qwen-2.5-coder-32b",
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
         )
@@ -1018,11 +1022,12 @@ def main() -> None:
 
     explicit_verified = False
 
+    write_observed = False
+
     for round_number in range(
         1,
         MAX_ROUNDS + 1
     ):
-        global_write_observed = False
 
         log(
             f"========== ROUND "
@@ -1079,6 +1084,9 @@ def main() -> None:
                         name,
                         arguments
                     )
+
+                    if name == "write_file" and "WRITE_OK" in result:
+                        write_observed = True
 
                     if (
                         name == "run_command"
@@ -1262,10 +1270,23 @@ def main() -> None:
         "Evidence:",
         report
     )
-    print()
-    print(
-        "No automatic commit or push was performed."
-    )
+    if (
+        evidence["final_status"] == "VERIFIED_FIXED"
+        and os.environ.get("GITHUB_ACTIONS") == "true"
+    ):
+        try:
+            print("VERIFIED FIX: Committing and pushing changes...")
+            subprocess.run(["git", "config", "user.name", "KHALED Groq Repair Bot"], cwd=ROOT, check=False)
+            subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], cwd=ROOT, check=False)
+            subprocess.run(["git", "add", "-A"], cwd=ROOT, check=False)
+            subprocess.run(["git", "commit", "-m", "fix: autonomous repair by KHALED Groq Repair"], cwd=ROOT, check=False)
+            ref_name = os.environ.get("GITHUB_REF_NAME", "main")
+            subprocess.run(["git", "push", "origin", f"HEAD:{ref_name}"], cwd=ROOT, check=False)
+            print("AUTOMATIC COMMIT AND PUSH: SUCCESS")
+        except Exception as push_err:
+            print(f"AUTOMATIC COMMIT/PUSH ERROR: {push_err}")
+    else:
+        print("No automatic commit or push was performed.")
 
 
 if __name__ == "__main__":

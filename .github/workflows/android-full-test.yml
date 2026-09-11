@@ -121,7 +121,7 @@ jobs:
             test -f "$APK" || { echo "APK: FAIL $ITEM"; exit 1; }
 
             AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
-            PKG="$("$AAPT" dump badging "$APK" | sed -n "s/^package: name='\[^']*\'.*/\1/p" | head -1)"
+            PKG="$("$AAPT" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
             test -n "$PKG"
 
             "$ADB" install -r "$APK"

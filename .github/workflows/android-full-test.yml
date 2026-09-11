@@ -11,12 +11,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -92,11 +92,11 @@ jobs:
         timeout-minutes: 30
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 30
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          avd-name: khaled-api35
+          avd-name: khaled-api30
           force-avd-creation: true
           emulator-boot-timeout: 900
           cores: 4
@@ -156,13 +156,6 @@ jobs:
 
             echo "REAL ANDROID TEST: PASS"
 
-      - name: Upload Android evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: khaled-android-evidence
-          path: evidence/
-          if-no-files-found: warn
       - name: Huawei compatibility audit
         shell: bash
         run: |

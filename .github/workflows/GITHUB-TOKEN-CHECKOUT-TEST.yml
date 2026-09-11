@@ -1,0 +1,28 @@
+name: GITHUB Token Checkout Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  checkout-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify checkout only
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CHECKOUT_OK"
+          echo "HEAD=$(git rev-parse HEAD)"
+          git ls-remote origin HEAD >/dev/null
+          echo "GIT_REMOTE_ACCESS_OK"
+          echo "NO_BUILD"
+          echo "NO_TEST"
+          echo "NO_REBUILD"

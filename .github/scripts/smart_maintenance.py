@@ -176,14 +176,10 @@ def read_file(path_string: str) -> str:
             f"{path_string}"
         )
 
-    text = path.read_text(
+    return path.read_text(
         encoding="utf-8",
         errors="replace"
     )
-
-    lines = text.splitlines()
-    numbered_lines = [f"{i+1:4d} | {line}" for i, line in enumerate(lines)]
-    return "\n".join(numbered_lines)
 
 
 # ============================================================

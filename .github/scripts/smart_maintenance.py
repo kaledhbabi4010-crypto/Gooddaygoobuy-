@@ -853,7 +853,7 @@ def ask_groq(
     max_tokens = int(
         os.environ.get(
             "GROQ_MAX_COMPLETION_TOKENS",
-            "3000"
+            "1000"
         )
     )
 
@@ -1214,6 +1214,10 @@ def main() -> None:
             ):
 
                 explicit_verified = True
+
+            if (write_observed and verification_after_write_observed and successful_command_observed) or (explicit_verified and successful_command_observed):
+                log("EARLY EXIT: Fix or repository health verified successfully. Stopping further rounds to conserve token quota.")
+                break
 
             if not successful_command_observed:
 

@@ -48,6 +48,7 @@ jobs:
 
       - name: 🚑 KHALED GROQ REAL REPAIR
         if: failure() || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
         shell: bash
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

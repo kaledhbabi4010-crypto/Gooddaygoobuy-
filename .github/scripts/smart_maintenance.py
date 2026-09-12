@@ -759,17 +759,12 @@ def select_model() -> str:
 
                 return candidate
 
-        raise RuntimeError(
-            "No supported configured Groq model "
-            "was found."
-        )
+        return REQUESTED_MODEL
 
     except Exception as exc:
 
-        raise RuntimeError(
-            "Could not verify Groq model availability: "
-            f"{exc}"
-        )
+        log(f"Model listing skipped due to API auth or network check: {exc}. Defaulting to {REQUESTED_MODEL}")
+        return REQUESTED_MODEL
 
 
 # ============================================================

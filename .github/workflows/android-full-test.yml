@@ -2,7 +2,15 @@ name: GQS Full Android Test
 
 on:
   push:
+    paths:
+      - 'android_app/**'
+      - 'khaled_android/**'
+      - '.github/workflows/android-full-test.yml'
   pull_request:
+    paths:
+      - 'android_app/**'
+      - 'khaled_android/**'
+      - '.github/workflows/android-full-test.yml'
   workflow_dispatch:
 
 jobs:

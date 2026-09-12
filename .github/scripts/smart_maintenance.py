@@ -176,10 +176,14 @@ def read_file(path_string: str) -> str:
             f"{path_string}"
         )
 
-    return path.read_text(
+    text = path.read_text(
         encoding="utf-8",
         errors="replace"
     )
+
+    lines = text.splitlines()
+    numbered_lines = [f"{i+1:4d} | {line}" for i, line in enumerate(lines)]
+    return "\n".join(numbered_lines)
 
 
 # ============================================================
@@ -271,14 +275,15 @@ def run_command(command: str) -> str:
             timeout=COMMAND_TIMEOUT,
         )
 
-        output = (
-            process.stdout or ""
-        ) + (
-            process.stderr or ""
-        )
+        stdout = process.stdout or ""
+        stderr = process.stderr or ""
+
+        if process.returncode != 0 and stderr.strip():
+            output = f"=== STDERR ERROR TRACEBACK ===\n{stderr}\n=== STDOUT ===\n{stdout}"
+        else:
+            output = stdout + stderr
 
         if len(output) > 4000:
-
             output = output[-4000:]
 
         return (
@@ -1128,12 +1133,15 @@ def main() -> None:
 
                     try:
 
-                        arguments = json.loads(
-                            tool_call.function.arguments
-                            or "{}"
-                        )
+                        raw_args = tool_call.function.arguments or "{}"
+                        if isinstance(raw_args, dict):
+                            arguments = raw_args
+                        elif isinstance(raw_args, str):
+                            arguments = json.loads(raw_args)
+                        else:
+                            arguments = {}
 
-                    except json.JSONDecodeError:
+                    except Exception:
 
                         arguments = {}
 

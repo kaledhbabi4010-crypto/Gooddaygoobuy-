@@ -42,7 +42,7 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_MODEL: "llama-3.3-70b-versatile"
-          GROQ_MAX_ROUNDS: "6"
+          GROQ_MAX_ROUNDS: "2"
         run: |
           set -euo pipefail
           python3 -m pip install --disable-pip-version-check groq

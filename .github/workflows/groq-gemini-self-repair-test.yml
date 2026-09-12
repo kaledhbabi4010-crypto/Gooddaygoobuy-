@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ secrets.REPAIR_PAT != '' && secrets.REPAIR_PAT || github.token }}
 
       - name: Install actionlint validator
         run: |
@@ -32,11 +33,13 @@ jobs:
           bash ./download-actionlint.bash latest
 
       - name: Detect defects in all workflows
-        # structural workflow errors only - shellcheck/pyflakes noise is disabled
         id: detect
         run: |
           set -euo pipefail
-          /tmp/actionlint -no-color -shellcheck= -pyflakes= .github/workflows/*.yml > /tmp/actionlint-report.txt 2>&1 || true
+          FILES=$(ls .github/workflows/*.yml | grep -v 'groq-gemini-self-repair-test.yml' || true)
+          /tmp/actionlint -no-color $FILES > /tmp/actionlint-raw.txt 2>&1 || true
+          grep -E '^[^ :]+:[0-9]+:[0-9]+: ' /tmp/actionlint-raw.txt > /tmp/actionlint-errs.txt || true
+          grep -vE 'SC[0-9]+:(info|warning|style):' /tmp/actionlint-errs.txt > /tmp/actionlint-report.txt || true
           if [ -s /tmp/actionlint-report.txt ]; then
             echo "defects=true" >> "$GITHUB_OUTPUT"
             echo "=== DEFECTS DETECTED ==="
@@ -61,6 +64,7 @@ jobs:
 
           Rules:
           - Repair ONLY the .github/workflows/*.yml files named in the report.
+          - Do NOT modify .github/workflows/groq-gemini-self-repair-test.yml (this repair system itself).
           - Use the smallest justified changes that resolve the reported defects.
           - Do NOT modify any other files.
           - Do NOT rebuild the project and do NOT run the full test suite.
@@ -74,14 +78,19 @@ jobs:
 
           python3 .github/scripts/smart_maintenance.py "$(cat /tmp/repair-prompt.txt)"
 
-      - name: Verify only workflows changed
+      - name: Verify repair scope
         id: verify
         if: always() && steps.detect.outputs.defects == 'true'
         run: |
           set -euo pipefail
           echo "=== GIT STATUS ==="
           git status --short -- . ':!.groq-repair/'
-          OTHER=$(git status --porcelain -- . ':!.groq-repair/' | grep -v "\.github/workflows/" || true)
+          SELF=$(git status --porcelain -- .github/workflows/groq-gemini-self-repair-test.yml || true)
+          if [ -n "$SELF" ]; then
+            echo "ERROR: REPAIR WORKFLOW SELF-MODIFICATION BLOCKED"
+            exit 52
+          fi
+          OTHER=$(git status --porcelain -- . ':!.groq-repair/' | grep -v '.github/workflows/' || true)
           if [ -n "$OTHER" ]; then
             echo "ERROR: OTHER FILES MODIFIED"
             echo "$OTHER"
@@ -101,15 +110,19 @@ jobs:
           git checkout - 2>/dev/null || true
           git add -- .github/workflows
           git commit -m "fix: auto-repair workflow defects [skip ci]"
-          git push
+          if [ -z "${{ secrets.REPAIR_PAT }}" ]; then echo "REPAIR_PAT secret not configured"; exit 53; fi
+          git push "https://x-access-token:${{ secrets.REPAIR_PAT }}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}" || { echo "PUSH REJECTED - check REPAIR_PAT token has repo+workflow scope"; exit 53; }
 
       - name: Final validation
         if: always()
         run: |
           set -euo pipefail
-          /tmp/actionlint -no-color -shellcheck= -pyflakes= .github/workflows/*.yml > /tmp/new-report.txt 2>&1 || true
-          OLD=$(grep -cE ':[0-9]+:[0-9]+: ' /tmp/actionlint-report.txt || true)
-          NEW=$(grep -cE ':[0-9]+:[0-9]+: ' /tmp/new-report.txt || true)
+          FILES=$(ls .github/workflows/*.yml | grep -v 'groq-gemini-self-repair-test.yml' || true)
+          /tmp/actionlint -no-color $FILES > /tmp/new-raw.txt 2>&1 || true
+          grep -E '^[^ :]+:[0-9]+:[0-9]+: ' /tmp/new-raw.txt > /tmp/new-errs.txt || true
+          grep -vE 'SC[0-9]+:(info|warning|style):' /tmp/new-errs.txt > /tmp/new-report.txt || true
+          OLD=$(wc -l < /tmp/actionlint-report.txt)
+          NEW=$(wc -l < /tmp/new-report.txt)
           echo "ERRORS_BEFORE=$OLD"
           echo "ERRORS_AFTER=$NEW"
           if [ "$NEW" -eq 0 ] && [ "$OLD" -eq 0 ]; then

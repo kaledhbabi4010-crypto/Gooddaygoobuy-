@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -25,7 +25,30 @@ jobs:
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           gemini_cli_version: "0.58.0"
-          gemini_model: "gemini-1.5-flash"
           prompt: |
-            SELF-REPAIR ONLY: Fix invalid YAML or action issues in .github/workflows/.
-            Validate repair with git diff and commit if verified. Final status: VERIFIED/FAILED
+            SELF-REPAIR ONLY.
+
+            Repair the Gemini GitHub Actions infrastructure.
+
+            Inspect all files in .github/workflows,
+            GEMINI.md, KHALED-MASTER-PLAN.md and git history.
+
+            Repair invalid YAML, duplicate Gemini workflows,
+            permissions, authentication, checkout, Git configuration,
+            Gemini CLI configuration, trust configuration and workflow
+            conflicts.
+
+            Do NOT develop KHALED.
+            Do NOT develop REVO AI.
+            Do NOT modify application functionality.
+
+            Validate everything after repairing.
+
+            Inspect git diff before committing.
+
+            If valid, commit and push the repair.
+
+            Never fabricate verification.
+
+            Final status:
+            VERIFIED / FAILED / NOT_VERIFIED / BLOCKED

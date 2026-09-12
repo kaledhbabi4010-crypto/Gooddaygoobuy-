@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -88,72 +88,15 @@ jobs:
             ls -lh "$APK"
           done
 
-      - name: Prepare Android emulator script
-        shell: bash
-        run: |
-          cat << 'EOF' > run_emulator_tests.sh
-          #!/usr/bin/env bash
-          set -euo pipefail
-          mkdir -p evidence
-          ADB="$ANDROID_HOME/platform-tools/adb"
-
-          echo "DEVICE"
-          "$ADB" devices
-
-          echo "BOOT"
-          for i in $(seq 1 60); do
-            B=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
-            [ "$B" = "1" ] && break
-            sleep 5
-          done
-
-          [ "$B" = "1" ] || {
-            echo "BOOT: FAIL"
-            "$ADB" shell getprop > evidence/getprop.txt || true
-            "$ADB" logcat -d > evidence/logcat.txt || true
-            exit 1
-          }
-
-          echo "BOOT: PASS"
-
-          for ITEM in android_app khaled_android; do
-            APK="$GITHUB_WORKSPACE/$ITEM/app/build/outputs/apk/debug/app-debug.apk"
-            test -f "$APK" || { echo "APK: FAIL $ITEM"; exit 1; }
-
-            AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
-            PKG="$("$AAPT" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
-            test -n "$PKG"
-
-            "$ADB" install -r "$APK"
-            "$ADB" logcat -c
-
-            ACT="$("$ADB" shell cmd package resolve-activity --brief "$PKG" | tail -1 | tr -d '\r')"
-            "$ADB" shell am start -W -n "$ACT"
-            sleep 10
-
-            PID="$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' || true)"
-            "$ADB" logcat -d > "evidence/${ITEM}_logcat.txt"
-
-            test -n "$PID" || { echo "PROCESS: FAIL $ITEM"; exit 1; }
-            ! grep -qE "FATAL EXCEPTION|AndroidRuntime.*FATAL|am_crash" "evidence/${ITEM}_logcat.txt"
-
-            "$ADB" shell uninstall "$PKG" || true
-            echo "TEST: PASS $ITEM"
-          done
-
-          echo "REAL ANDROID TEST: PASS"
-          EOF
-          chmod +x run_emulator_tests.sh
-
       - name: Run real Android emulator tests
         timeout-minutes: 30
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          avd-name: khaled-api34
+          avd-name: khaled-api35
           force-avd-creation: true
           emulator-boot-timeout: 900
           cores: 4
@@ -162,7 +105,56 @@ jobs:
           disk-size: 8G
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
           disable-animations: false
-          script: bash run_emulator_tests.sh
+          script: |
+            set -euo pipefail
+            mkdir -p evidence
+            ADB="$ANDROID_HOME/platform-tools/adb"
+
+            echo "DEVICE"
+            "$ADB" devices
+
+            echo "BOOT"
+            for i in $(seq 1 60); do
+              B=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+              [ "$B" = "1" ] && break
+              sleep 5
+            done
+
+            [ "$B" = "1" ] || {
+              echo "BOOT: FAIL"
+              "$ADB" shell getprop > evidence/getprop.txt || true
+              "$ADB" logcat -d > evidence/logcat.txt || true
+              exit 1
+            }
+
+            echo "BOOT: PASS"
+
+            for ITEM in android_app khaled_android; do
+              APK="$GITHUB_WORKSPACE/$ITEM/app/build/outputs/apk/debug/app-debug.apk"
+              test -f "$APK" || { echo "APK: FAIL $ITEM"; exit 1; }
+
+              AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+              PKG="$("$AAPT" dump badging "$APK" | sed -n "s/^package: name='\[^']*\'.*/\1/p" | head -1)"
+              test -n "$PKG"
+
+              "$ADB" install -r "$APK"
+              "$ADB" logcat -c
+
+              ACT="$("$ADB" shell cmd package resolve-activity --brief "$PKG" | tail -1 | tr -d '\r')"
+              "$ADB" shell am start -W -n "$ACT"
+              sleep 10
+
+              PID="$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' || true)"
+              "$ADB" logcat -d > "evidence/${ITEM}_logcat.txt"
+
+              test -n "$PID" || { echo "PROCESS: FAIL $ITEM"; exit 1; }
+              ! grep -qE "FATAL EXCEPTION|AndroidRuntime.*FATAL|am_crash" "evidence/${ITEM}_logcat.txt"
+
+              "$ADB" shell uninstall "$PKG" || true
+              echo "TEST: PASS $ITEM"
+            done
+
+            echo "REAL ANDROID TEST: PASS"
 
       - name: Upload Android evidence
         if: always()
@@ -212,6 +204,7 @@ jobs:
                   out.write("STATIC HUAWEI AUDIT: COMPLETE\n")
                   out.write("REAL HUAWEI DEVICE: NOT TESTED\n")
 
+          PY
           cat evidence/huawei_compatibility.txt
 
       - name: Upload complete evidence

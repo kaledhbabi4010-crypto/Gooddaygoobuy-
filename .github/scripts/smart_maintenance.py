@@ -38,7 +38,7 @@ REQUESTED_MODEL = os.environ.get(
 )
 
 MAX_ROUNDS = int(
-    os.environ.get("GROQ_MAX_ROUNDS", "6")
+    os.environ.get("GROQ_MAX_ROUNDS", "40")
 )
 
 COMMAND_TIMEOUT = int(
@@ -142,10 +142,10 @@ def project_structure() -> str:
             relative_path(path)
         )
 
-        if len(files) >= 100:
+        if len(files) >= 6000:
 
             files.append(
-                "... STRUCTURE TRUNCATED FOR TOKEN EFFICIENCY ..."
+                "... STRUCTURE TRUNCATED ..."
             )
 
             break
@@ -271,16 +271,15 @@ def run_command(command: str) -> str:
             timeout=COMMAND_TIMEOUT,
         )
 
-        stdout = process.stdout or ""
-        stderr = process.stderr or ""
+        output = (
+            process.stdout or ""
+        ) + (
+            process.stderr or ""
+        )
 
-        if process.returncode != 0 and stderr.strip():
-            output = f"=== STDERR ERROR TRACEBACK ===\n{stderr}\n=== STDOUT ===\n{stdout}"
-        else:
-            output = stdout + stderr
+        if len(output) > 50_000:
 
-        if len(output) > 4000:
-            output = output[-4000:]
+            output = output[-50_000:]
 
         return (
             f"EXIT_CODE={process.returncode}\n"
@@ -390,9 +389,9 @@ def git_diff() -> str:
             process.stderr or ""
         )
 
-        if len(output) > 4000:
+        if len(output) > 80_000:
 
-            output = output[-4000:]
+            output = output[-80_000:]
 
         return output
 
@@ -521,35 +520,6 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
-            },
-        },
-    },
-
-    {
-        "type": "function",
-        "function": {
-            "name": "patch_file",
-            "description": (
-                "Perform a targeted search-and-replace edit on an existing repository text file."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string"
-                    },
-                    "old_string": {
-                        "type": "string"
-                    },
-                    "new_string": {
-                        "type": "string"
-                    },
-                },
-                "required": [
-                    "path",
-                    "old_string",
-                    "new_string"
-                ],
             },
         },
     },
@@ -740,10 +710,6 @@ def select_model() -> str:
             return REQUESTED_MODEL
 
         fallbacks = (
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "qwen-2.5-coder-32b",
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
         )
@@ -759,12 +725,35 @@ def select_model() -> str:
 
                 return candidate
 
-        return REQUESTED_MODEL
+        raise RuntimeError(
+            "No supported configured Groq model "
+            "was found."
+        )
 
     except Exception as exc:
 
-        log(f"Model listing skipped due to API auth or network check: {exc}. Defaulting to {REQUESTED_MODEL}")
-        return REQUESTED_MODEL
+        raise RuntimeError(
+            "Could not verify Groq model availability: "
+            f"{exc}"
+        )
+def build_model_queue():
+    primary = select_model()
+    queue = [primary]
+    try:
+        available = client.models.list()
+        ids = {m.id for m in available.data}
+        for candidate in (
+            "openai/gpt-oss-20b",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "openai/gpt-oss-120b",
+        ):
+            if candidate in ids and candidate not in queue:
+                queue.append(candidate)
+    except Exception:
+        pass
+    return queue
+
 
 
 # ============================================================
@@ -806,109 +795,120 @@ def _compact_messages_for_groq(messages, max_chars=24000):
     return out
 
 def compact_groq_messages(
-    messages: list[Any]
+    messages: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """
     Keep Groq request context bounded.
-    Convert ChatCompletionMessage or dict to pure serializable dicts.
-    Preserve system message and newest conversation context.
+    Preserve system message and newest conversation/tool context.
     """
-    if not messages:
-        return []
-
-    clean_messages = []
-    for m in messages:
-        if isinstance(m, dict):
-            clean_messages.append(dict(m))
-        elif hasattr(m, "model_dump"):
-            clean_messages.append(m.model_dump(exclude_none=True))
-        elif hasattr(m, "dict"):
-            clean_messages.append(m.dict(exclude_none=True))
-        else:
-            role = getattr(m, "role", "user")
-            content = getattr(m, "content", None)
-            tool_calls = getattr(m, "tool_calls", None)
-            item = {"role": role}
-            if content is not None:
-                item["content"] = str(content)
-            if tool_calls is not None:
-                item["tool_calls"] = tool_calls
-            clean_messages.append(item)
-
     MAX_MESSAGE_CHARS = 2200
-    for m in clean_messages:
-        content = m.get("content")
+    MAX_MESSAGES = 8
+
+    if not messages:
+        return messages
+
+    def compact_message(message):
+        if not isinstance(message, dict):
+            return message
+
+        out = dict(message)
+
+        content = out.get("content")
+
         if isinstance(content, str) and len(content) > MAX_MESSAGE_CHARS:
-            m["content"] = content[:MAX_MESSAGE_CHARS] + "\n[CONTEXT_TRUNCATED_BY_GROQ_REPAIR_ENGINE]"
+            out["content"] = (
+                content[:MAX_MESSAGE_CHARS]
+                + "\n[CONTEXT_TRUNCATED_BY_GROQ_REPAIR_ENGINE]"
+            )
 
-    if len(clean_messages) <= 10:
-        return clean_messages
+        return out
 
-    system_msgs = [m for m in clean_messages if m.get("role") == "system"]
-    rest = [m for m in clean_messages if m.get("role") != "system"]
+    # Always preserve system message.
+    system = []
+    rest = messages
 
-    recent = rest[-8:]
-    return system_msgs + recent
+    if isinstance(messages[0], dict) and messages[0].get("role") == "system":
+        system = [compact_message(messages[0])]
+        rest = messages[1:]
+
+    # Keep newest messages because they contain the current tool result/error.
+    recent = rest[-MAX_MESSAGES:]
+
+    return system + [
+        compact_message(message)
+        for message in recent
+    ]
+
+
+class GroqRateLimitError(RuntimeError):
+    pass
 
 
 def ask_groq(
     model: str,
-    messages: list[Any]
-):
+    messages: list[dict[str, Any]],
+    max_attempts: int = 6
+) -> str:
 
     max_tokens = int(
         os.environ.get(
             "GROQ_MAX_COMPLETION_TOKENS",
-            "3000"
+            "1000"
         )
     )
 
-    candidate_models = [
-        model,
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "qwen-2.5-coder-32b",
-        "mixtral-8x7b-32768",
-    ]
+    for attempt in range(1, max_attempts + 1):
+        try:
+            compact_messages = compact_groq_messages(messages)
 
-    # Remove duplicates while preserving order
-    seen = set()
-    models_to_try = []
-    for m in candidate_models:
-        if m not in seen:
-            seen.add(m)
-            models_to_try.append(m)
+            return client.chat.completions.create(
+                model=model,
+                messages=compact_messages,
+                tools=TOOLS,
+                tool_choice="auto",
+                temperature=0,
+                max_completion_tokens=max_tokens,
+            )
 
-    compact_messages = compact_groq_messages(messages)
+        except Exception as exc:
+            error_text = str(exc)
 
-    for current_model in models_to_try:
-        for attempt in range(1, 3):
-            try:
-                return client.chat.completions.create(
-                    model=current_model,
-                    messages=compact_messages,
-                    tools=TOOLS,
-                    tool_choice="auto",
-                    temperature=0,
-                    max_completion_tokens=max_tokens,
+            if "429" not in error_text:
+                raise
+
+            import re as _re
+
+            log(
+                "GROQ_429_DETAIL: "
+                + error_text[:300].replace(
+                    "\n", " "
+                )
+            )
+
+            wait_seconds = 30 * attempt
+
+            retry_after = _re.search(
+                r"try again in ([\d.]+)s",
+                error_text,
+            )
+
+            if retry_after:
+                wait_seconds = max(
+                    wait_seconds,
+                    int(float(retry_after.group(1))) + 5,
                 )
 
-            except Exception as exc:
-                error_text = str(exc)
+            log(
+                f"GROQ_RATE_LIMIT_RETRY {attempt}/{max_attempts}: "
+                f"waiting {wait_seconds}s "
+                f"(model={model})"
+            )
 
-                if "429" in error_text or "rate_limit" in error_text.lower():
-                    log(
-                        f"GROQ_MODEL_RATE_LIMIT [{current_model}] "
-                        f"Attempt {attempt}: Switching model..."
-                    )
-                    time.sleep(2 * attempt)
-                    break
-                else:
-                    log(f"GROQ_MODEL_ERROR [{current_model}]: {exc}")
-                    break
+            time.sleep(wait_seconds)
 
-    raise RuntimeError(
-        "Groq API call failed across all candidate models."
+    raise GroqRateLimitError(
+        "Groq rate limit persisted after "
+        f"{max_attempts} retries (model={model})."
     )
 
 
@@ -955,6 +955,8 @@ def execute_tool(
             return result
 
         if name == "write_file":
+            write_observed = True
+
             result = write_file(
                 arguments["path"],
                 arguments["content"]
@@ -963,24 +965,6 @@ def execute_tool(
             log(result)
 
             return result
-
-        if name == "patch_file":
-            path_str = arguments["path"]
-            old_str = arguments["old_string"]
-            new_str = arguments["new_string"]
-
-            source = safe_path(path_str)
-            if not source.is_file():
-                return f"ERROR: file not found: {path_str}"
-
-            text = source.read_text(encoding="utf-8", errors="replace")
-            if old_str not in text:
-                return f"ERROR: old_string not found in {path_str}"
-
-            updated = text.replace(old_str, new_str, 1)
-            result = write_file(path_str, updated)
-            log(f"PATCH_OK: {path_str}")
-            return f"PATCH_OK: {path_str}"
 
         if name == "git_diff":
 
@@ -1010,7 +994,8 @@ def main() -> None:
     print("=" * 72)
     print()
 
-    model = select_model()
+    model_queue = build_model_queue()
+    model = model_queue[0]
 
     log(
         f"Using Groq model: {model}"
@@ -1025,12 +1010,10 @@ def main() -> None:
     if not issue:
 
         issue = (
-            "Perform a comprehensive repository repair and health verification. "
-            "Inspect all subprojects (Android gradle projects android_app and khaled_android, "
-            "C# .NET solution KHALED.sln, Python engines and scripts). "
-            "Find any build, compilation, test, or configuration failures across all repository files. "
-            "Identify why any previous repairs failed, diagnose root causes using actual command evidence, "
-            "and apply minimal targeted repairs to resolve all failures."
+            "Perform a repository health investigation. "
+            "Find reproducible build, test, or runtime "
+            "failures. Do not modify files until "
+            "evidence identifies a real problem."
         )
 
     evidence = {
@@ -1080,12 +1063,11 @@ def main() -> None:
 
     explicit_verified = False
 
-    write_observed = False
+    round_number = 0
 
-    for round_number in range(
-        1,
-        MAX_ROUNDS + 1
-    ):
+    while round_number < MAX_ROUNDS:
+
+        round_number += 1
 
         log(
             f"========== ROUND "
@@ -1103,7 +1085,12 @@ def main() -> None:
 
             response = ask_groq(
                 model,
-                messages
+                messages,
+                max_attempts=(
+                    3
+                    if len(model_queue) > 1
+                    else 6
+                )
             )
 
             message = (
@@ -1124,15 +1111,12 @@ def main() -> None:
 
                     try:
 
-                        raw_args = tool_call.function.arguments or "{}"
-                        if isinstance(raw_args, dict):
-                            arguments = raw_args
-                        elif isinstance(raw_args, str):
-                            arguments = json.loads(raw_args)
-                        else:
-                            arguments = {}
+                        arguments = json.loads(
+                            tool_call.function.arguments
+                            or "{}"
+                        )
 
-                    except Exception:
+                    except json.JSONDecodeError:
 
                         arguments = {}
 
@@ -1146,13 +1130,14 @@ def main() -> None:
                         arguments
                     )
 
-                    if (name == "write_file" and "WRITE_OK" in result) or (name == "patch_file" and "PATCH_OK" in result):
-                        write_observed = True
-
-                    if name == "run_command" and "EXIT_CODE=0" in result:
+                    if (
+                        name == "run_command"
+                        and write_observed
+                        and "EXIT_CODE=0"
+                        in result
+                    ):
                         successful_command_observed = True
-                        if write_observed:
-                            verification_after_write_observed = True
+                        verification_after_write_observed = True
 
                     round_record[
                         "tools"
@@ -1230,10 +1215,6 @@ def main() -> None:
 
                 explicit_verified = True
 
-            if write_observed and verification_after_write_observed and successful_command_observed:
-                log("EARLY EXIT: Fix verified successfully. Stopping further rounds to conserve tokens.")
-                break
-
             if not successful_command_observed:
 
                 messages.append({
@@ -1267,25 +1248,25 @@ def main() -> None:
                     ),
                 })
 
-        except Exception as exc:
-
-            error = (
-                f"{type(exc).__name__}: "
-                f"{exc}"
-            )
-
+        except GroqRateLimitError as exc:
+            error = f"{type(exc).__name__}: {exc}"
             log(error)
+            round_record["error"] = error
+            evidence["rounds"].append(round_record)
+            if len(model_queue) > 1:
+                model = model_queue.pop(1)
+                log(f"ROTATING GROQ MODEL -> {model}")
+                round_number -= 1
+                continue
+            log("All Groq models rate-limited. Stopping.")
+            break
 
-            round_record[
-                "error"
-            ] = error
-
-            evidence[
-                "rounds"
-            ].append(
-                round_record
-            )
-
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            log(error)
+            round_record["error"] = error
+            evidence["rounds"].append(round_record)
+            break
             break
 
     evidence[
@@ -1297,8 +1278,9 @@ def main() -> None:
     ] = git_diff()
 
     if (
-        (write_observed and verification_after_write_observed and successful_command_observed)
-        or (explicit_verified and successful_command_observed)
+        write_observed
+        and verification_after_write_observed
+        and successful_command_observed
     ):
         evidence[
             "final_status"
@@ -1330,23 +1312,10 @@ def main() -> None:
         "Evidence:",
         report
     )
-    if (
-        evidence["final_status"] == "VERIFIED_FIXED"
-        and os.environ.get("GITHUB_ACTIONS") == "true"
-    ):
-        try:
-            print("VERIFIED FIX: Committing and pushing changes...")
-            subprocess.run(["git", "config", "user.name", "KHALED Groq Repair Bot"], cwd=ROOT, check=False)
-            subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], cwd=ROOT, check=False)
-            subprocess.run(["git", "add", "-A"], cwd=ROOT, check=False)
-            subprocess.run(["git", "commit", "-m", "fix: autonomous repair by KHALED Groq Repair"], cwd=ROOT, check=False)
-            ref_name = os.environ.get("GITHUB_REF_NAME", "main")
-            subprocess.run(["git", "push", "origin", f"HEAD:{ref_name}"], cwd=ROOT, check=False)
-            print("AUTOMATIC COMMIT AND PUSH: SUCCESS")
-        except Exception as push_err:
-            print(f"AUTOMATIC COMMIT/PUSH ERROR: {push_err}")
-    else:
-        print("No automatic commit or push was performed.")
+    print()
+    print(
+        "No automatic commit or push was performed."
+    )
 
 
 if __name__ == "__main__":

@@ -142,10 +142,10 @@ def project_structure() -> str:
             relative_path(path)
         )
 
-        if len(files) >= 6000:
+        if len(files) >= 100:
 
             files.append(
-                "... STRUCTURE TRUNCATED ..."
+                "... STRUCTURE TRUNCATED FOR TOKEN EFFICIENCY ..."
             )
 
             break
@@ -1172,6 +1172,10 @@ def main() -> None:
             ):
 
                 explicit_verified = True
+
+            if write_observed and verification_after_write_observed and successful_command_observed:
+                log("EARLY EXIT: Fix verified successfully. Stopping further rounds to conserve tokens.")
+                break
 
             if not successful_command_observed:
 

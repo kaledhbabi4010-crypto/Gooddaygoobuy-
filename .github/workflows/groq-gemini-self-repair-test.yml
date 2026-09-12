@@ -110,7 +110,8 @@ jobs:
           git checkout - 2>/dev/null || true
           git add -- .github/workflows
           git commit -m "fix: auto-repair workflow defects [skip ci]"
-          git push || { echo "PUSH REJECTED - add REPAIR_PAT secret (GitHub token with workflow scope) in Settings > Secrets and variables > Actions"; exit 53; }
+          if [ -z "${{ secrets.REPAIR_PAT }}" ]; then echo "REPAIR_PAT secret not configured"; exit 53; fi
+          git push "https://x-access-token:${{ secrets.REPAIR_PAT }}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}" || { echo "PUSH REJECTED - check REPAIR_PAT token has repo+workflow scope"; exit 53; }
 
       - name: Final validation
         if: always()

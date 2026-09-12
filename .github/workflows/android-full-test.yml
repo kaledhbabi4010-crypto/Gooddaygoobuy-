@@ -204,7 +204,6 @@ jobs:
                   out.write("STATIC HUAWEI AUDIT: COMPLETE\n")
                   out.write("REAL HUAWEI DEVICE: NOT TESTED\n")
 
-          PY
           cat evidence/huawei_compatibility.txt
 
       - name: Upload complete evidence

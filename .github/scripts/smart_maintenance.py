@@ -527,6 +527,35 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "patch_file",
+            "description": (
+                "Perform a targeted search-and-replace edit on an existing repository text file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    },
+                    "old_string": {
+                        "type": "string"
+                    },
+                    "new_string": {
+                        "type": "string"
+                    },
+                },
+                "required": [
+                    "path",
+                    "old_string",
+                    "new_string"
+                ],
+            },
+        },
+    },
+
+    {
+        "type": "function",
+        "function": {
             "name": "read_file",
             "description": (
                 "Read a text file inside "
@@ -924,6 +953,24 @@ def execute_tool(
 
             return result
 
+        if name == "patch_file":
+            path_str = arguments["path"]
+            old_str = arguments["old_string"]
+            new_str = arguments["new_string"]
+
+            source = safe_path(path_str)
+            if not source.is_file():
+                return f"ERROR: file not found: {path_str}"
+
+            text = source.read_text(encoding="utf-8", errors="replace")
+            if old_str not in text:
+                return f"ERROR: old_string not found in {path_str}"
+
+            updated = text.replace(old_str, new_str, 1)
+            result = write_file(path_str, updated)
+            log(f"PATCH_OK: {path_str}")
+            return f"PATCH_OK: {path_str}"
+
         if name == "git_diff":
 
             return git_diff()
@@ -1085,7 +1132,7 @@ def main() -> None:
                         arguments
                     )
 
-                    if name == "write_file" and "WRITE_OK" in result:
+                    if (name == "write_file" and "WRITE_OK" in result) or (name == "patch_file" and "PATCH_OK" in result):
                         write_observed = True
 
                     if (

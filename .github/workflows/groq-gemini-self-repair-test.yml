@@ -32,11 +32,12 @@ jobs:
           bash ./download-actionlint.bash latest
 
       - name: Detect defects in all workflows
-        # structural workflow errors only - shellcheck/pyflakes noise is disabled
+        # structural workflow errors + error-severity script issues; info/warning noise filtered out
         id: detect
         run: |
           set -euo pipefail
-          /tmp/actionlint -no-color -shellcheck= -pyflakes= .github/workflows/*.yml > /tmp/actionlint-report.txt 2>&1 || true
+          /tmp/actionlint -format '{{range $e := .}}{{$e.File}}:{{$e.Line}}:{{$e.Column}}: {{$e.Message}}{{"\n"}}{{end}}' .github/workflows/*.yml > /tmp/actionlint-raw.txt 2>&1 || true
+          grep -vE 'SC[0-9]+:(info|warning):' /tmp/actionlint-raw.txt > /tmp/actionlint-report.txt || true
           if [ -s /tmp/actionlint-report.txt ]; then
             echo "defects=true" >> "$GITHUB_OUTPUT"
             echo "=== DEFECTS DETECTED ==="
@@ -107,9 +108,10 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          /tmp/actionlint -no-color -shellcheck= -pyflakes= .github/workflows/*.yml > /tmp/new-report.txt 2>&1 || true
-          OLD=$(grep -cE ':[0-9]+:[0-9]+: ' /tmp/actionlint-report.txt || true)
-          NEW=$(grep -cE ':[0-9]+:[0-9]+: ' /tmp/new-report.txt || true)
+          /tmp/actionlint -format '{{range $e := .}}{{$e.File}}:{{$e.Line}}:{{$e.Column}}: {{$e.Message}}{{"\n"}}{{end}}' .github/workflows/*.yml > /tmp/new-raw.txt 2>&1 || true
+          grep -vE 'SC[0-9]+:(info|warning):' /tmp/new-raw.txt > /tmp/new-report.txt || true
+          OLD=$(wc -l < /tmp/actionlint-report.txt)
+          NEW=$(wc -l < /tmp/new-report.txt)
           echo "ERRORS_BEFORE=$OLD"
           echo "ERRORS_AFTER=$NEW"
           if [ "$NEW" -eq 0 ] && [ "$OLD" -eq 0 ]; then

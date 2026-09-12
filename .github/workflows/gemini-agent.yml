@@ -19,9 +19,11 @@ jobs:
 
       - uses: google-github-actions/run-gemini-cli@v0
         timeout-minutes: 20
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GH_WORKFLOW_PAT }}
           GEMINI_CLI_TRUST_WORKSPACE: "true"
+          GEMINI_MODEL: "gemini-1.5-flash"
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           gemini_cli_version: "0.58.0"

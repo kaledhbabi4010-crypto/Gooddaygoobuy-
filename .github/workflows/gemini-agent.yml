@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -25,6 +25,7 @@ jobs:
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           gemini_cli_version: "0.58.0"
+          gemini_model: "gemini-1.5-flash"
           prompt: |
             SELF-REPAIR ONLY.
 

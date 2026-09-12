@@ -38,7 +38,7 @@ REQUESTED_MODEL = os.environ.get(
 )
 
 MAX_ROUNDS = int(
-    os.environ.get("GROQ_MAX_ROUNDS", "10")
+    os.environ.get("GROQ_MAX_ROUNDS", "40")
 )
 
 COMMAND_TIMEOUT = int(

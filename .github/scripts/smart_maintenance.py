@@ -277,9 +277,9 @@ def run_command(command: str) -> str:
             process.stderr or ""
         )
 
-        if len(output) > 50_000:
+        if len(output) > 4000:
 
-            output = output[-50_000:]
+            output = output[-4000:]
 
         return (
             f"EXIT_CODE={process.returncode}\n"
@@ -389,9 +389,9 @@ def git_diff() -> str:
             process.stderr or ""
         )
 
-        if len(output) > 80_000:
+        if len(output) > 4000:
 
-            output = output[-80_000:]
+            output = output[-4000:]
 
         return output
 

@@ -810,54 +810,54 @@ def _compact_messages_for_groq(messages, max_chars=24000):
     return out
 
 def compact_groq_messages(
-    messages: list[dict[str, Any]]
+    messages: list[Any]
 ) -> list[dict[str, Any]]:
     """
     Keep Groq request context bounded.
-    Preserve system message and newest conversation/tool context.
+    Convert ChatCompletionMessage or dict to pure serializable dicts.
+    Preserve system message and newest conversation context.
     """
-    MAX_MESSAGE_CHARS = 2200
-    MAX_MESSAGES = 8
-
     if not messages:
-        return messages
+        return []
 
-    def compact_message(message):
-        if not isinstance(message, dict):
-            return message
+    clean_messages = []
+    for m in messages:
+        if isinstance(m, dict):
+            clean_messages.append(dict(m))
+        elif hasattr(m, "model_dump"):
+            clean_messages.append(m.model_dump(exclude_none=True))
+        elif hasattr(m, "dict"):
+            clean_messages.append(m.dict(exclude_none=True))
+        else:
+            role = getattr(m, "role", "user")
+            content = getattr(m, "content", None)
+            tool_calls = getattr(m, "tool_calls", None)
+            item = {"role": role}
+            if content is not None:
+                item["content"] = str(content)
+            if tool_calls is not None:
+                item["tool_calls"] = tool_calls
+            clean_messages.append(item)
 
-        out = dict(message)
-
-        content = out.get("content")
-
+    MAX_MESSAGE_CHARS = 2200
+    for m in clean_messages:
+        content = m.get("content")
         if isinstance(content, str) and len(content) > MAX_MESSAGE_CHARS:
-            out["content"] = (
-                content[:MAX_MESSAGE_CHARS]
-                + "\n[CONTEXT_TRUNCATED_BY_GROQ_REPAIR_ENGINE]"
-            )
+            m["content"] = content[:MAX_MESSAGE_CHARS] + "\n[CONTEXT_TRUNCATED_BY_GROQ_REPAIR_ENGINE]"
 
-        return out
+    if len(clean_messages) <= 10:
+        return clean_messages
 
-    # Always preserve system message.
-    system = []
-    rest = messages
+    system_msgs = [m for m in clean_messages if m.get("role") == "system"]
+    rest = [m for m in clean_messages if m.get("role") != "system"]
 
-    if isinstance(messages[0], dict) and messages[0].get("role") == "system":
-        system = [compact_message(messages[0])]
-        rest = messages[1:]
-
-    # Keep newest messages because they contain the current tool result/error.
-    recent = rest[-MAX_MESSAGES:]
-
-    return system + [
-        compact_message(message)
-        for message in recent
-    ]
+    recent = rest[-8:]
+    return system_msgs + recent
 
 
 def ask_groq(
     model: str,
-    messages: list[dict[str, Any]]
+    messages: list[Any]
 ):
 
     max_tokens = int(
@@ -867,37 +867,52 @@ def ask_groq(
         )
     )
 
-    for attempt in range(1, 4):
-        try:
-            compact_messages = compact_groq_messages(messages)
+    candidate_models = [
+        model,
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "qwen-2.5-coder-32b",
+        "mixtral-8x7b-32768",
+    ]
 
-            return client.chat.completions.create(
-                model=model,
-                messages=compact_messages,
-                tools=TOOLS,
-                tool_choice="auto",
-                temperature=0,
-                max_completion_tokens=max_tokens,
-            )
+    # Remove duplicates while preserving order
+    seen = set()
+    models_to_try = []
+    for m in candidate_models:
+        if m not in seen:
+            seen.add(m)
+            models_to_try.append(m)
 
-        except Exception as exc:
-            error_text = str(exc)
+    compact_messages = compact_groq_messages(messages)
 
-            if "429" not in error_text:
-                raise
+    for current_model in models_to_try:
+        for attempt in range(1, 3):
+            try:
+                return client.chat.completions.create(
+                    model=current_model,
+                    messages=compact_messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
+                    temperature=0,
+                    max_completion_tokens=max_tokens,
+                )
 
-            wait_seconds = 10 * attempt
+            except Exception as exc:
+                error_text = str(exc)
 
-            log(
-                f"GROQ_RATE_LIMIT_RETRY "
-                f"{attempt}/3: waiting "
-                f"{wait_seconds}s"
-            )
-
-            time.sleep(wait_seconds)
+                if "429" in error_text or "rate_limit" in error_text.lower():
+                    log(
+                        f"GROQ_MODEL_RATE_LIMIT [{current_model}] "
+                        f"Attempt {attempt}: Switching model..."
+                    )
+                    time.sleep(2 * attempt)
+                    break
+                else:
+                    log(f"GROQ_MODEL_ERROR [{current_model}]: {exc}")
+                    break
 
     raise RuntimeError(
-        "Groq rate limit persisted after 3 retries."
+        "Groq API call failed across all candidate models."
     )
 
 
@@ -1135,14 +1150,10 @@ def main() -> None:
                     if (name == "write_file" and "WRITE_OK" in result) or (name == "patch_file" and "PATCH_OK" in result):
                         write_observed = True
 
-                    if (
-                        name == "run_command"
-                        and write_observed
-                        and "EXIT_CODE=0"
-                        in result
-                    ):
+                    if name == "run_command" and "EXIT_CODE=0" in result:
                         successful_command_observed = True
-                        verification_after_write_observed = True
+                        if write_observed:
+                            verification_after_write_observed = True
 
                     round_record[
                         "tools"

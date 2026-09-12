@@ -834,7 +834,7 @@ def ask_groq(
         )
     )
 
-    for attempt in range(1, 4):
+    for attempt in range(1, 7):
         try:
             compact_messages = compact_groq_messages(messages)
 
@@ -853,18 +853,18 @@ def ask_groq(
             if "429" not in error_text:
                 raise
 
-            wait_seconds = 10 * attempt
+            wait_seconds = 30 * attempt
 
             log(
                 f"GROQ_RATE_LIMIT_RETRY "
-                f"{attempt}/3: waiting "
+                f"{attempt}/6: waiting "
                 f"{wait_seconds}s"
             )
 
             time.sleep(wait_seconds)
 
     raise RuntimeError(
-        "Groq rate limit persisted after 3 retries."
+        "Groq rate limit persisted after 6 retries."
     )
 
 

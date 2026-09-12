@@ -38,7 +38,7 @@ REQUESTED_MODEL = os.environ.get(
 )
 
 MAX_ROUNDS = int(
-    os.environ.get("GROQ_MAX_ROUNDS", "6")
+    os.environ.get("GROQ_MAX_ROUNDS", "10")
 )
 
 COMMAND_TIMEOUT = int(
@@ -846,7 +846,8 @@ class GroqRateLimitError(RuntimeError):
 
 def ask_groq(
     model: str,
-    messages: list[dict[str, Any]]
+    messages: list[dict[str, Any]],
+    max_attempts: int = 6
 ) -> str:
 
     max_tokens = int(
@@ -856,7 +857,7 @@ def ask_groq(
         )
     )
 
-    for attempt in range(1, 7):
+    for attempt in range(1, max_attempts + 1):
         try:
             compact_messages = compact_groq_messages(messages)
 
@@ -898,7 +899,7 @@ def ask_groq(
                 )
 
             log(
-                f"GROQ_RATE_LIMIT_RETRY {attempt}/6: "
+                f"GROQ_RATE_LIMIT_RETRY {attempt}/{max_attempts}: "
                 f"waiting {wait_seconds}s "
                 f"(model={model})"
             )
@@ -906,8 +907,8 @@ def ask_groq(
             time.sleep(wait_seconds)
 
     raise GroqRateLimitError(
-        "Groq rate limit persisted after 6 retries "
-        f"(model={model})."
+        "Groq rate limit persisted after "
+        f"{max_attempts} retries (model={model})."
     )
 
 
@@ -1062,10 +1063,11 @@ def main() -> None:
 
     explicit_verified = False
 
-    for round_number in range(
-        1,
-        MAX_ROUNDS + 1
-    ):
+    round_number = 0
+
+    while round_number < MAX_ROUNDS:
+
+        round_number += 1
 
         log(
             f"========== ROUND "
@@ -1083,7 +1085,12 @@ def main() -> None:
 
             response = ask_groq(
                 model,
-                messages
+                messages,
+                max_attempts=(
+                    3
+                    if len(model_queue) > 1
+                    else 6
+                )
             )
 
             message = (
@@ -1249,6 +1256,7 @@ def main() -> None:
             if len(model_queue) > 1:
                 model = model_queue.pop(1)
                 log(f"ROTATING GROQ MODEL -> {model}")
+                round_number -= 1
                 continue
             log("All Groq models rate-limited. Stopping.")
             break

@@ -13,12 +13,13 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - uses: google-github-actions/run-gemini-cli@v0
         timeout-minutes: 20
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GH_WORKFLOW_PAT }}
           GEMINI_CLI_TRUST_WORKSPACE: "true"

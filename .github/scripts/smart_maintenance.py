@@ -736,6 +736,24 @@ def select_model() -> str:
             "Could not verify Groq model availability: "
             f"{exc}"
         )
+def build_model_queue():
+    primary = select_model()
+    queue = [primary]
+    try:
+        available = client.models.list()
+        ids = {m.id for m in available.data}
+        for candidate in (
+            "openai/gpt-oss-20b",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "openai/gpt-oss-120b",
+        ):
+            if candidate in ids and candidate not in queue:
+                queue.append(candidate)
+    except Exception:
+        pass
+    return queue
+
 
 
 # ============================================================
@@ -822,10 +840,14 @@ def compact_groq_messages(
     ]
 
 
+class GroqRateLimitError(RuntimeError):
+    pass
+
+
 def ask_groq(
     model: str,
     messages: list[dict[str, Any]]
-):
+) -> str:
 
     max_tokens = int(
         os.environ.get(
@@ -853,18 +875,39 @@ def ask_groq(
             if "429" not in error_text:
                 raise
 
-            wait_seconds = 30 * attempt
+            import re as _re
 
             log(
-                f"GROQ_RATE_LIMIT_RETRY "
-                f"{attempt}/6: waiting "
-                f"{wait_seconds}s"
+                "GROQ_429_DETAIL: "
+                + error_text[:300].replace(
+                    "\n", " "
+                )
+            )
+
+            wait_seconds = 30 * attempt
+
+            retry_after = _re.search(
+                r"try again in ([\d.]+)s",
+                error_text,
+            )
+
+            if retry_after:
+                wait_seconds = max(
+                    wait_seconds,
+                    int(float(retry_after.group(1))) + 5,
+                )
+
+            log(
+                f"GROQ_RATE_LIMIT_RETRY {attempt}/6: "
+                f"waiting {wait_seconds}s "
+                f"(model={model})"
             )
 
             time.sleep(wait_seconds)
 
-    raise RuntimeError(
-        "Groq rate limit persisted after 6 retries."
+    raise GroqRateLimitError(
+        "Groq rate limit persisted after 6 retries "
+        f"(model={model})."
     )
 
 
@@ -950,7 +993,8 @@ def main() -> None:
     print("=" * 72)
     print()
 
-    model = select_model()
+    model_queue = build_model_queue()
+    model = model_queue[0]
 
     log(
         f"Using Groq model: {model}"
@@ -1197,25 +1241,24 @@ def main() -> None:
                     ),
                 })
 
-        except Exception as exc:
-
-            error = (
-                f"{type(exc).__name__}: "
-                f"{exc}"
-            )
-
+        except GroqRateLimitError as exc:
+            error = f"{type(exc).__name__}: {exc}"
             log(error)
+            round_record["error"] = error
+            evidence["rounds"].append(round_record)
+            if len(model_queue) > 1:
+                model = model_queue.pop(1)
+                log(f"ROTATING GROQ MODEL -> {model}")
+                continue
+            log("All Groq models rate-limited. Stopping.")
+            break
 
-            round_record[
-                "error"
-            ] = error
-
-            evidence[
-                "rounds"
-            ].append(
-                round_record
-            )
-
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            log(error)
+            round_record["error"] = error
+            evidence["rounds"].append(round_record)
+            break
             break
 
     evidence[

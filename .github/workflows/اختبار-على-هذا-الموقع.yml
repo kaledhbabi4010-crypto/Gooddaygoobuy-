@@ -1,0 +1,386 @@
+name: "اختبار على هذا الموقع"
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "GitHub Actions run containing the APK artifact"
+        required: true
+        default: "34746424863"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+
+  browserstack-real-device:
+    name: "BrowserStack Real Android — ${{ matrix.apk_name }}"
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - apk_name: "android_app"
+            apk_path: "android_app/app/build/outputs/apk/debug/app-debug.apk"
+            expected_sha256: "d63d5c64775d3383f1fe0efd010a5ed493d7dcb67f72931ac697d8b78efb7bca"
+
+          - apk_name: "khaled_android"
+            apk_path: "khaled_android/app/build/outputs/apk/debug/app-debug.apk"
+            expected_sha256: "3227653f94fde356ad81bcc823611c151bd9732b30851517ee432c1005e9d406"
+
+    env:
+      BS_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+      BS_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+      RUN_ID: ${{ inputs.run_id }}
+
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      - name: "Verify BrowserStack secrets"
+        shell: bash
+        run: |
+          set -e
+
+          if [ -z "$BS_USERNAME" ]; then
+            echo "❌ BROWSERSTACK_USERNAME missing"
+            exit 1
+          fi
+
+          if [ -z "$BS_ACCESS_KEY" ]; then
+            echo "❌ BROWSERSTACK_ACCESS_KEY missing"
+            exit 1
+          fi
+
+          echo "✅ BrowserStack credentials detected"
+
+      - name: "Download exact APK artifact"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p browserstack_artifact
+
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name "GQS-full-android-test-evidence" \
+            --dir browserstack_artifact
+
+          APK="browserstack_artifact/${{ matrix.apk_path }}"
+
+          if [ ! -f "$APK" ]; then
+            echo "❌ APK not found:"
+            find browserstack_artifact -type f | sort
+            exit 1
+          fi
+
+          echo "APK=$APK" >> "$GITHUB_ENV"
+
+          echo "APK found:"
+          ls -lh "$APK"
+
+      - name: "Verify APK SHA256"
+        shell: bash
+        run: |
+          set -e
+
+          ACTUAL=$(sha256sum "$APK" | awk '{print $1}')
+          EXPECTED="${{ matrix.expected_sha256 }}"
+
+          echo "Expected: $EXPECTED"
+          echo "Actual:   $ACTUAL"
+
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "❌ SHA256 mismatch"
+            exit 1
+          fi
+
+          echo "✅ SHA256 PASS"
+
+      - name: "Install test dependencies"
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install --quiet Appium-Python-Client requests
+
+      - name: "Run on BrowserStack REAL Android device"
+        shell: bash
+        env:
+          APK_FILE: ${{ env.APK }}
+        run: |
+          set -e
+
+          cat > browserstack_real_test.py <<'PY'
+          import os
+          import time
+          import hashlib
+          import requests
+
+          from appium import webdriver
+          from appium.options.android import UiAutomator2Options
+          from selenium.webdriver.common.by import By
+
+          username = os.environ["BS_USERNAME"]
+          access_key = os.environ["BS_ACCESS_KEY"]
+          apk = os.environ["APK_FILE"]
+          apk_name = os.environ["APK_NAME"]
+
+          print("=" * 70)
+          print("BROWSERSTACK REAL ANDROID DEVICE TEST")
+          print("=" * 70)
+          print("APK:", apk_name)
+
+          # --------------------------------------------
+          # Upload APK to BrowserStack App Automate
+          # --------------------------------------------
+          print("Uploading APK to BrowserStack...")
+
+          with open(apk, "rb") as f:
+              response = requests.post(
+                  "https://api-cloud.browserstack.com/app-automate/upload",
+                  auth=(username, access_key),
+                  files={"file": (os.path.basename(apk), f, "application/vnd.android.package-archive")},
+                  data={"custom_id": "KHALED_" + apk_name}
+              )
+
+          if response.status_code != 200:
+              print("Upload HTTP:", response.status_code)
+              print(response.text)
+              raise SystemExit("❌ BrowserStack APK upload failed")
+
+          upload = response.json()
+          app_url = upload.get("app_url")
+
+          if not app_url:
+              print(upload)
+              raise SystemExit("❌ BrowserStack did not return app_url")
+
+          print("BrowserStack APP URL:", app_url)
+
+          # --------------------------------------------
+          # REAL DEVICE capabilities
+          #
+          # Regex device selection intentionally used
+          # to allocate the first available REAL device.
+          # No emulator is requested.
+          # --------------------------------------------
+          options = UiAutomator2Options()
+
+          options.set_capability("platformName", "Android")
+          options.set_capability("deviceName", ".*")
+          options.set_capability("platformVersion", ".*")
+          options.set_capability("app", app_url)
+          options.set_capability("automationName", "UIAutomator2")
+
+          options.set_capability(
+              "bstack:options",
+              {
+                  "userName": username,
+                  "accessKey": access_key,
+                  "projectName": "KHALED",
+                  "buildName": "BrowserStack Real Device",
+                  "sessionName": "KHALED " + apk_name,
+                  "appiumVersion": "2.15.0",
+                  "deviceOrientation": "portrait",
+                  "video": True,
+                  "appiumLogs": True
+              }
+          )
+
+          print("Requesting REAL Android device...")
+          print("Emulator: NOT REQUESTED")
+
+          driver = None
+          session_id = None
+          test_error = None
+
+          try:
+              driver = webdriver.Remote(
+                  command_executor="https://hub-cloud.browserstack.com/wd/hub",
+                  options=options
+              )
+
+              session_id = driver.session_id
+
+              print("SESSION ID:", session_id)
+
+              # ----------------------------------------
+              # Wait for application
+              # ----------------------------------------
+              time.sleep(5)
+
+              print("Current package:", driver.current_package)
+
+              # ----------------------------------------
+              # Basic UI inspection
+              # ----------------------------------------
+              page_source = driver.page_source
+
+              print("UI SOURCE LENGTH:", len(page_source))
+
+              if not page_source:
+                  raise RuntimeError("Empty UI hierarchy")
+
+              # ----------------------------------------
+              # Find text/input controls
+              # ----------------------------------------
+              inputs = driver.find_elements(
+                  By.CLASS_NAME,
+                  "android.widget.EditText"
+              )
+
+              buttons = driver.find_elements(
+                  By.CLASS_NAME,
+                  "android.widget.Button"
+              )
+
+              print("EDIT TEXT COUNT:", len(inputs))
+              print("BUTTON COUNT:", len(buttons))
+
+              # ----------------------------------------
+              # Functional test
+              # ----------------------------------------
+              if inputs:
+                  inputs[0].click()
+                  inputs[0].send_keys("BrowserStack real device test")
+
+                  print("INPUT TEST: PASS")
+
+              if buttons:
+                  buttons[0].click()
+                  time.sleep(2)
+
+                  print("BUTTON TEST: PASS")
+
+              # ----------------------------------------
+              # Crash check
+              # ----------------------------------------
+              print("APPLICATION PACKAGE:", driver.current_package)
+
+              print("=" * 70)
+              print("REAL DEVICE TEST: PASS")
+              print("=" * 70)
+
+          except Exception as e:
+              test_error = repr(e)
+              print("=" * 70)
+              print("REAL DEVICE TEST: FAIL")
+              print(test_error)
+              print("=" * 70)
+
+          finally:
+              if driver:
+                  try:
+                      driver.quit()
+                  except Exception:
+                      pass
+
+          if test_error:
+              raise SystemExit(1)
+          PY
+
+          export APK_NAME="${{ matrix.apk_name }}"
+
+          python browserstack_real_test.py
+
+      - name: "Write individual result"
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p browserstack-results
+
+          cat > "browserstack-results/${{ matrix.apk_name }}.md" <<EOF
+          # BrowserStack Real Device Test
+
+          ## APK
+          ${{ matrix.apk_name }}
+
+          ## Expected SHA256
+          ${{ matrix.expected_sha256 }}
+
+          ## Platform
+          BrowserStack App Automate
+
+          ## Device type
+          **REAL ANDROID DEVICE**
+
+          ## Emulator
+          **NOT USED**
+
+          ## Test date
+          $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+          ## GitHub Run
+          ${{ github.run_id }}
+
+          ## Result
+          See GitHub job logs above.
+          EOF
+
+      - name: "Upload test result"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "browserstack-result-${{ matrix.apk_name }}"
+          path: browserstack-results/${{ matrix.apk_name }}.md
+
+  status:
+    name: "Create BrowserStack status"
+    needs: browserstack-real-device
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      - name: "Create status file"
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p status
+
+          {
+            echo "# KHALED — BrowserStack Real Device Status"
+            echo
+            echo "**Test type:** REAL ANDROID DEVICE"
+            echo
+            echo "**Emulator:** NOT USED"
+            echo
+            echo "**BrowserStack App Automate:** YES"
+            echo
+            echo "**GitHub source run:** ${{ inputs.run_id }}"
+            echo
+            echo "**BrowserStack workflow run:** ${{ github.run_id }}"
+            echo
+            echo "**Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            echo
+            echo "## Matrix result"
+            echo
+            echo "| APK | Result |"
+            echo "|---|---|"
+            echo "| android_app | ${{ needs.browserstack-real-device.result }} |"
+            echo "| khaled_android | ${{ needs.browserstack-real-device.result }} |"
+            echo
+            echo "## Important"
+            echo
+            echo "This workflow uses BrowserStack App Automate Real Android Devices."
+            echo "It does not request or use Android Emulator."
+          } > BROWSERSTACK-REAL-DEVICE-STATUS.md
+
+          git config user.name "KHALED BrowserStack Bot"
+          git config user.email "actions@users.noreply.github.com"
+
+          git add BROWSERSTACK-REAL-DEVICE-STATUS.md
+
+          git diff --cached --quiet || \
+            git commit -m "test: BrowserStack real Android device status"
+
+          git push origin HEAD:main

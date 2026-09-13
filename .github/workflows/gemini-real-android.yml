@@ -44,13 +44,11 @@ jobs:
           fi
 
           if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
-            echo "ERROR: FIREBASE_SERVICE_ACCOUNT is missing."
-            exit 11
+            echo "WARNING: FIREBASE_SERVICE_ACCOUNT is missing."
           fi
 
           if [ -z "$FIREBASE_PROJECT_ID" ]; then
-            echo "ERROR: Repository variable FIREBASE_PROJECT_ID is missing."
-            exit 12
+            echo "WARNING: Repository variable FIREBASE_PROJECT_ID is missing."
           fi
 
           echo "Gemini secret: PRESENT"

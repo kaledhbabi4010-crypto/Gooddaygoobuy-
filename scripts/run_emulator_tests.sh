@@ -38,6 +38,14 @@ for i in $(seq 1 5); do
   "${ADB}" shell settings put global verifier_verify_adb_installs 0 2>/dev/null && break || sleep 2
 done
 
+for i in $(seq 1 5); do
+  "${ADB}" shell settings put global upload_apk_enable 0 2>/dev/null && break || sleep 2
+done
+
+for i in $(seq 1 5); do
+  "${ADB}" shell settings put global package_verifier_user_consent -1 2>/dev/null && break || sleep 2
+done
+
 for ITEM in android_app khaled_android; do
   APK="${GITHUB_WORKSPACE}/${ITEM}/app/build/outputs/apk/debug/app-debug.apk"
   test -f "${APK}" || { echo "APK: FAIL ${ITEM}"; exit 1; }
@@ -46,7 +54,17 @@ for ITEM in android_app khaled_android; do
   PKG="$("${AAPT}" dump badging "${APK}" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
   test -n "${PKG}"
 
-  "${ADB}" install -r --user 0 "${APK}"
+  INSTALLED=0
+  for attempt in 1 2 3; do
+    if "${ADB}" install -r -g -t --user 0 "${APK}"; then
+      INSTALLED=1
+      break
+    fi
+    echo "Install attempt ${attempt} failed for ${ITEM}, retrying..."
+    sleep 5
+  done
+
+  [ "${INSTALLED}" = "1" ] || { echo "INSTALL: FAIL ${ITEM}"; exit 1; }
   "${ADB}" logcat -c
 
   ACT="$("${ADB}" shell cmd package resolve-activity --brief "${PKG}" | tail -1 | tr -d '\r')"

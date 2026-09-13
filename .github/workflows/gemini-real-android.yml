@@ -11,7 +11,7 @@ permissions:
 
 env:
   FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
-  GEMINI_MODEL: gemini-3.8-flash
+  GEMINI_MODEL: gemini-1.5-flash
 
 jobs:
 
@@ -287,62 +287,69 @@ jobs:
       # ------------------------------------------------------------
       - name: Gemini AI diagnosis
         if: always()
+        continue-on-error: true
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -e
 
-          python3 -m pip install --quiet --upgrade google-genai
+          python3 -m pip install --quiet --upgrade google-genai || true
 
           python3 - <<'PY'
           import os
-          from google import genai
 
           key = os.environ.get("GEMINI_API_KEY")
 
           if not key:
-              raise SystemExit("GEMINI_API_KEY missing.")
+              print("GEMINI_API_KEY missing. Skipping AI diagnosis.")
+              with open("gemini-evidence/gemini-diagnosis.txt", "w") as f:
+                  f.write("Gemini API key missing. Diagnosis skipped.")
+              raise SystemExit(0)
 
-          client = genai.Client(api_key=key)
+          try:
+              from google import genai
+              client = genai.Client(api_key=key)
 
-          with open(
-              "gemini-evidence/report-limited.txt",
-              "r",
-              errors="replace"
-          ) as f:
-              evidence = f.read()
+              with open(
+                  "gemini-evidence/report-limited.txt",
+                  "r",
+                  errors="replace"
+              ) as f:
+                  evidence = f.read()
 
-          prompt = f"""
-          You are the GQS Android diagnostic AI.
+              prompt = f"""
+              You are the GQS Android diagnostic AI.
 
-          IMPORTANT RULES:
-          1. Never invent test results.
-          2. Use only the evidence supplied below.
-          3. Clearly separate CONFIRMED facts from POSSIBLE causes.
-          4. The test was intended for a REAL PHYSICAL Android device.
-          5. Do not claim success unless the Firebase test evidence confirms it.
-          6. Do not expose secrets or API keys.
-          7. Do not request or print credentials.
-          8. Do not modify application source code.
-          9. Produce an actionable diagnosis for the workflow.
+              IMPORTANT RULES:
+              1. Never invent test results.
+              2. Use only the evidence supplied below.
+              3. Clearly separate CONFIRMED facts from POSSIBLE causes.
+              4. The test was intended for a REAL PHYSICAL Android device.
+              5. Do not claim success unless the Firebase test evidence confirms it.
+              6. Do not expose secrets or API keys.
+              7. Do not request or print credentials.
+              8. Do not modify application source code.
+              9. Produce an actionable diagnosis for the workflow.
 
-          Return:
-          - TEST_STATUS
-          - CONFIRMED_FINDINGS
-          - LIKELY_ROOT_CAUSE
-          - REQUIRED_NEXT_ACTIONS
-          - WHETHER_RETEST_IS_REQUIRED
+              Return:
+              - TEST_STATUS
+              - CONFIRMED_FINDINGS
+              - LIKELY_ROOT_CAUSE
+              - REQUIRED_NEXT_ACTIONS
+              - WHETHER_RETEST_IS_REQUIRED
 
-          EVIDENCE:
-          {evidence}
-          """
+              EVIDENCE:
+              {evidence}
+              """
 
-          response = client.models.generate_content(
-              model=os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"),
-              contents=prompt
-          )
+              response = client.models.generate_content(
+                  model=os.environ.get("GEMINI_MODEL", "gemini-1.5-flash"),
+                  contents=prompt
+              )
 
-          text = response.text or "Gemini returned no text."
+              text = response.text or "Gemini returned no text."
+          except Exception as exc:
+              text = f"Gemini diagnosis skipped due to API/model error: {exc}"
 
           with open("gemini-evidence/gemini-diagnosis.txt", "w") as f:
               f.write(text)

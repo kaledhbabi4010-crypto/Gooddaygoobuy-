@@ -209,6 +209,85 @@ jobs:
 
               print("SESSION ID:", session_id)
 
+              # ==================================================
+              # CAPTURE REAL BROWSERSTACK SESSION EVIDENCE
+              # ==================================================
+              caps = driver.capabilities or {}
+
+              device_name = (
+                  caps.get("deviceName")
+                  or caps.get("device")
+                  or caps.get("browserstack.device")
+                  or "UNKNOWN"
+              )
+
+              platform_version = (
+                  caps.get("platformVersion")
+                  or caps.get("platform_version")
+                  or caps.get("os_version")
+                  or "UNKNOWN"
+              )
+
+              platform_name = (
+                  caps.get("platformName")
+                  or caps.get("platform")
+                  or "UNKNOWN"
+              )
+
+              bs_session = (
+                  caps.get("browserstack.sessionId")
+                  or caps.get("bstack:sessionId")
+                  or session_id
+                  or "UNKNOWN"
+              )
+
+              # BrowserStack session URL
+              session_url = (
+                  "https://app-automate.browserstack.com/dashboard/v2/sessions/"
+                  + str(session_id)
+              ) if session_id else "UNKNOWN"
+
+              evidence = {
+                  "session_id": str(session_id),
+                  "browserstack_session_id": str(bs_session),
+                  "session_url": session_url,
+                  "device": str(device_name),
+                  "platform": str(platform_name),
+                  "android_version": str(platform_version),
+                  "emulator": False,
+                  "real_device": True,
+                  "apk": apk_name,
+                  "timestamp_utc": time.strftime(
+                      "%Y-%m-%dT%H:%M:%SZ",
+                      time.gmtime()
+                  )
+              }
+
+              print("==================================================")
+              print("REAL DEVICE SESSION EVIDENCE")
+              print("==================================================")
+              print("REAL_DEVICE:", evidence["real_device"])
+              print("EMULATOR:", evidence["emulator"])
+              print("DEVICE:", evidence["device"])
+              print("PLATFORM:", evidence["platform"])
+              print("ANDROID VERSION:", evidence["android_version"])
+              print("SESSION ID:", evidence["session_id"])
+              print("SESSION URL:", evidence["session_url"])
+              print("==================================================")
+
+              with open(
+                  "browserstack_session_evidence.json",
+                  "w",
+                  encoding="utf-8"
+              ) as ef:
+                  import json
+                  json.dump(
+                      evidence,
+                      ef,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
               # ----------------------------------------
               # Wait for application
               # ----------------------------------------
@@ -288,6 +367,14 @@ jobs:
 
           python browserstack_real_test.py
 
+      - name: "Upload BrowserStack session evidence"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "browserstack-session-evidence-${{ matrix.apk_name }}"
+          path: browserstack_session_evidence.json
+          if-no-files-found: warn
+
       - name: "Write individual result"
         if: always()
         shell: bash
@@ -320,6 +407,15 @@ jobs:
 
           ## Result
           See GitHub job logs above.
+
+          ## Real Device Evidence
+          Session evidence is uploaded as a separate artifact.
+
+          ## Emulator
+          NOT USED
+
+          ## BrowserStack
+          App Automate Real Android Device
           EOF
 
       - name: "Upload test result"

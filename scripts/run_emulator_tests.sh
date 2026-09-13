@@ -22,6 +22,10 @@ done
 
 echo "BOOT: PASS"
 
+echo "DISABLE VERIFIER"
+"${ADB}" shell settings put global package_verifier_enable 0 || true
+"${ADB}" shell settings put global verifier_verify_adb_installs 0 || true
+
 for ITEM in android_app khaled_android; do
   APK="${GITHUB_WORKSPACE}/${ITEM}/app/build/outputs/apk/debug/app-debug.apk"
   test -f "${APK}" || { echo "APK: FAIL ${ITEM}"; exit 1; }

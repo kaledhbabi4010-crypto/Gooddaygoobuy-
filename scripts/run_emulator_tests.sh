@@ -7,9 +7,9 @@ ADB="${ANDROID_HOME:-/usr/local/lib/android/sdk}/platform-tools/adb"
 echo "DEVICE"
 "$ADB" devices || true
 
-echo "BOOT"
+echo "BOOT WAITING"
 B=""
-for i in $(seq 1 60); do
+for i in $(seq 1 90); do
   B=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
   [ "$B" = "1" ] && break
   sleep 5
@@ -24,19 +24,24 @@ fi
 
 echo "BOOT: PASS"
 
-# Wait for Package Manager service readiness
-echo "PM WAITING"
+# Robust Package Manager service readiness check
+echo "PM SERVICE WAITING"
 PM_READY=0
-for i in $(seq 1 30); do
+for i in $(seq 1 40); do
   if "$ADB" shell pm path android >/dev/null 2>&1; then
-    PM_READY=1
-    break
+    # Verify package service responds to commands without 'Can't find service' error
+    RES=$("$ADB" shell pm list packages 2>&1 || true)
+    if echo "$RES" | grep -q "package:"; then
+      PM_READY=1
+      break
+    fi
   fi
-  sleep 3
+  sleep 5
 done
 
 if [ "$PM_READY" -ne 1 ]; then
   echo "PM SERVICE NOT READY"
+  "$ADB" logcat -d > evidence/pm_logcat.txt 2>&1 || true
   exit 1
 fi
 echo "PM SERVICE READY"
@@ -70,17 +75,19 @@ for ITEM in android_app khaled_android; do
 
   echo "INSTALLING $ITEM ($PKG)..."
   INSTALLED=0
-  for attempt in $(seq 1 5); do
-    if "$ADB" install -r "$APK"; then
+  for attempt in $(seq 1 10); do
+    INSTALL_OUT=$("$ADB" install -r "$APK" 2>&1 || true)
+    if echo "$INSTALL_OUT" | grep -q "Success"; then
       INSTALLED=1
       break
     fi
-    echo "Install attempt $attempt failed for $ITEM. Retrying..."
-    sleep 5
+    echo "Install attempt $attempt failed for $ITEM ($INSTALL_OUT). Retrying in 8s..."
+    sleep 8
   done
 
   if [ "$INSTALLED" -ne 1 ]; then
     echo "INSTALL: FAIL $ITEM"
+    "$ADB" logcat -d > "evidence/${ITEM}_install_fail_logcat.txt" 2>&1 || true
     exit 1
   fi
 

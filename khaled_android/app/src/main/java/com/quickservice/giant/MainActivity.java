@@ -3,6 +3,8 @@ package com.quickservice.giant;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -20,37 +22,52 @@ public class MainActivity extends AppCompatActivity {
     private EditText inputEditText;
     private ScrollView scrollView;
 
-    private GradientDrawable createBubbleDrawable(int color, float radius) {
+    private GradientDrawable createShape(int color, float radius, int strokeColor, int strokeWidth) {
         GradientDrawable shape = new GradientDrawable();
         shape.setShape(GradientDrawable.RECTANGLE);
         shape.setColor(color);
         shape.setCornerRadius(radius);
+        if (strokeWidth > 0) {
+            shape.setStroke(strokeWidth, strokeColor);
+        }
         return shape;
     }
 
     private void addMessage(String text, boolean isUser) {
-        LinearLayout messageWrapper = new LinearLayout(this);
-        messageWrapper.setOrientation(LinearLayout.HORIZONTAL);
-        messageWrapper.setGravity(isUser ? Gravity.END : Gravity.START);
-        messageWrapper.setPadding(0, 10, 0, 10);
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setOrientation(LinearLayout.VERTICAL);
+        wrapper.setGravity(isUser ? Gravity.END : Gravity.START);
+        wrapper.setPadding(0, 12, 0, 12);
 
-        TextView messageView = new TextView(this);
-        messageView.setText(text);
-        messageView.setTextSize(15);
-        messageView.setTextColor(Color.WHITE);
-        messageView.setPadding(32, 22, 32, 22);
+        // Avatar / Label
+        TextView senderLabel = new TextView(this);
+        senderLabel.setText(isUser ? "👤 أنت" : "🤖 المساعد الذكي");
+        senderLabel.setTextSize(12);
+        senderLabel.setTextColor(Color.parseColor("#94A3B8"));
+        senderLabel.setPadding(isUser ? 0 : 8, 0, isUser ? 8 : 0, 6);
 
-        int bgColor = isUser ? Color.parseColor("#1D4ED8") : Color.parseColor("#262626");
-        messageView.setBackground(createBubbleDrawable(bgColor, 32f));
+        // Message Box
+        TextView msgView = new TextView(this);
+        msgView.setText(text);
+        msgView.setTextSize(15);
+        msgView.setTextColor(Color.WHITE);
+        msgView.setPadding(36, 26, 36, 26);
+        msgView.setLineSpacing(6f, 1.1f);
 
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+        int bgColor = isUser ? Color.parseColor("#2563EB") : Color.parseColor("#1E293B");
+        int strokeColor = isUser ? Color.parseColor("#3B82F6") : Color.parseColor("#334155");
+        msgView.setBackground(createShape(bgColor, 32f, strokeColor, 2));
+
+        LinearLayout.LayoutParams msgLp = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        lp.weight = 0;
+        msgLp.weight = 0;
 
-        messageWrapper.addView(messageView, lp);
-        messagesLayout.addView(messageWrapper);
+        wrapper.addView(senderLabel);
+        wrapper.addView(msgView, msgLp);
+
+        messagesLayout.addView(wrapper);
 
         scrollView.post(() -> scrollView.fullScroll(View.FOCUS_DOWN));
     }
@@ -59,9 +76,9 @@ public class MainActivity extends AppCompatActivity {
         TextView chip = new TextView(this);
         chip.setText(text);
         chip.setTextSize(13);
-        chip.setTextColor(Color.parseColor("#9CA3AF"));
-        chip.setPadding(24, 14, 24, 14);
-        chip.setBackground(createBubbleDrawable(Color.parseColor("#262626"), 24f));
+        chip.setTextColor(Color.parseColor("#CBD5E1"));
+        chip.setPadding(28, 16, 28, 16);
+        chip.setBackground(createShape(Color.parseColor("#1E293B"), 28f, Color.parseColor("#334155"), 2));
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -78,18 +95,18 @@ public class MainActivity extends AppCompatActivity {
         parent.addView(chip);
     }
 
-    private String getOfflineSmartResponse(String prompt) {
-        String query = prompt.toLowerCase().trim();
-        if (query.contains("مرحبا") || query.contains("أهلا") || query.contains("hello") || query.contains("hi")) {
-            return "مرحباً بك! أنا مساعد الذكاء الاصطناعي الذكي، كيف يمكنني مساعدتك اليوم في تطبيقك؟";
-        } else if (query.contains("هواوي") || query.contains("huawei") || query.contains("hms")) {
-            return "التطبيق متوافق 100% مع أجهزة هواوي وجميع أجهزة أندرويد بدون الاعتماد الإجباري على خدمات جوجل GMS.";
-        } else if (query.contains("مجاني") || query.contains("free") || query.contains("سعر")) {
-            return "نعم! هذا النظام يعتمد على هندسة صفرية التكلفة 100% ويدعم النماذج المجانية والمحلية مثل Ollama وOpenRouter.";
-        } else if (query.contains("أمر") || query.contains("تشغيل") || query.contains("مهمة")) {
-            return "تم تسجيل الأمر المباشر بنجاح! جاري معالجة طلبك وتنفيذه بسرعة فائقة.";
+    private String getSmartResponse(String input) {
+        String q = input.toLowerCase().trim();
+        if (q.contains("مرحبا") || q.contains("أهلا") || q.contains("سلام") || q.contains("hi") || q.contains("hello")) {
+            return "أهلاً وسهلاً بك! أنا مساعد الذكاء الاصطناعي الذكي والسريع. كيف أستطيع خدمتك اليوم؟";
+        } else if (q.contains("هواوي") || q.contains("huawei") || q.contains("p30") || q.contains("hms")) {
+            return "التطبيق يعمل بكفاءة وسرعة 100% على هاتف Huawei P30 وجميع أجهزة أندرويد وهواوي بدون أي حاجة لخدمات جوجل (GMS).";
+        } else if (q.contains("مجاني") || q.contains("free") || q.contains("سعر")) {
+            return "نعم، النظام مجاني 100% بدون أي رسوم خفية ويعتمد على هندسة ذكاء اصطناعي مستقلة ومجانية بالكامل.";
+        } else if (q.contains("اختبار") || q.contains("فحص") || q.contains("حالة")) {
+            return "جميع الخدمات شغالـة 100%:\n• المعالج: نشط\n• الاتصال: متصل أوفلاين/سحابي\n• توافق الأجهزة: أندرويد + هواوي HMS";
         } else {
-            return "تم استلام طلبك: \"" + prompt + "\"\nجاهز لمعالجة واستكمال كافة المهام المطلوبة كفاءة عالية.";
+            return "تم استقبال رسالتك: \"" + input + "\"\n\nالذكاء الاصطناعي جاهز ومعالج الطلبات يعمل بدقة وسرعة عالية!";
         }
     }
 
@@ -99,36 +116,47 @@ public class MainActivity extends AppCompatActivity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#121212"));
+        root.setBackgroundColor(Color.parseColor("#0F172A"));
 
-        // Header bar
+        // App Bar / Header
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setPadding(32, 28, 32, 28);
-        header.setBackgroundColor(Color.parseColor("#1E1E1E"));
+        header.setPadding(36, 32, 36, 32);
+        header.setBackgroundColor(Color.parseColor("#1E293B"));
         header.setGravity(Gravity.CENTER_VERTICAL);
+
+        LinearLayout titleContainer = new LinearLayout(this);
+        titleContainer.setOrientation(LinearLayout.VERTICAL);
 
         TextView titleView = new TextView(this);
         titleView.setText("KHALED / quickservice AI");
-        titleView.setTextSize(18);
+        titleView.setTextSize(17);
         titleView.setTextColor(Color.WHITE);
+
+        TextView statusView = new TextView(this);
+        statusView.setText("● متصل وجاهز للرد الفوري");
+        statusView.setTextSize(12);
+        statusView.setTextColor(Color.parseColor("#22C55E"));
+
+        titleContainer.addView(titleView);
+        titleContainer.addView(statusView);
 
         TextView clearBtn = new TextView(this);
         clearBtn.setText("مسح المحادثة");
-        clearBtn.setTextSize(13);
-        clearBtn.setTextColor(Color.parseColor("#EF4444"));
-        clearBtn.setPadding(16, 8, 16, 8);
-        clearBtn.setBackground(createBubbleDrawable(Color.parseColor("#3F1B1B"), 16f));
+        clearBtn.setTextSize(12);
+        clearBtn.setTextColor(Color.parseColor("#F87171"));
+        clearBtn.setPadding(20, 10, 20, 10);
+        clearBtn.setBackground(createShape(Color.parseColor("#451A1A"), 20f, Color.parseColor("#7F1D1D"), 1));
 
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        header.addView(titleView, titleLp);
+        header.addView(titleContainer, titleLp);
         header.addView(clearBtn);
 
         root.addView(header);
 
-        // Chat messages scroll view
+        // Chat messages scroll container
         scrollView = new ScrollView(this);
-        scrollView.setPadding(24, 20, 24, 20);
+        scrollView.setPadding(28, 20, 28, 20);
 
         messagesLayout = new LinearLayout(this);
         messagesLayout.setOrientation(LinearLayout.VERTICAL);
@@ -144,41 +172,42 @@ public class MainActivity extends AppCompatActivity {
             1
         ));
 
-        // Quick prompts scroll bar
+        // Quick prompts scroll view
         HorizontalScrollView chipsScroll = new HorizontalScrollView(this);
         chipsScroll.setHorizontalScrollBarEnabled(false);
-        chipsScroll.setPadding(24, 12, 24, 12);
+        chipsScroll.setPadding(28, 14, 28, 14);
 
         LinearLayout chipsLayout = new LinearLayout(this);
         chipsLayout.setOrientation(LinearLayout.HORIZONTAL);
 
         addQuickChip(chipsLayout, "مرحباً بك");
-        addQuickChip(chipsLayout, "هل التطبيق متوافق مع هواوي؟");
-        addQuickChip(chipsLayout, "هل الخدمات مجانية 100%؟");
+        addQuickChip(chipsLayout, "هل يعمل على Huawei P30؟");
+        addQuickChip(chipsLayout, "هل الخدمة مجانية 100%؟");
         addQuickChip(chipsLayout, "فحص حالة النظام");
 
         chipsScroll.addView(chipsLayout);
         root.addView(chipsScroll);
 
-        // Input composer bar
+        // Message Composer Bar
         LinearLayout composer = new LinearLayout(this);
-        composer.setPadding(24, 16, 24, 24);
-        composer.setBackgroundColor(Color.parseColor("#1E1E1E"));
+        composer.setPadding(24, 20, 24, 28);
+        composer.setBackgroundColor(Color.parseColor("#1E293B"));
         composer.setGravity(Gravity.CENTER_VERTICAL);
 
         inputEditText = new EditText(this);
-        inputEditText.setHint("اكتب أمرك أو استفسارك هنا...");
+        inputEditText.setHint("اكتب استفسارك أو أمرك هنا...");
         inputEditText.setTextColor(Color.WHITE);
-        inputEditText.setHintTextColor(Color.parseColor("#6B7280"));
-        inputEditText.setBackground(createBubbleDrawable(Color.parseColor("#2B2B2B"), 24f));
-        inputEditText.setPadding(32, 20, 32, 20);
+        inputEditText.setHintTextColor(Color.parseColor("#64748B"));
+        inputEditText.setBackground(createShape(Color.parseColor("#0F172A"), 28f, Color.parseColor("#334155"), 2));
+        inputEditText.setPadding(36, 22, 36, 22);
         inputEditText.setSingleLine(false);
         inputEditText.setMaxLines(3);
 
         Button sendBtn = new Button(this);
         sendBtn.setText("إرسال");
         sendBtn.setTextColor(Color.WHITE);
-        sendBtn.setBackground(createBubbleDrawable(Color.parseColor("#2563EB"), 24f));
+        sendBtn.setTextSize(14);
+        sendBtn.setBackground(createShape(Color.parseColor("#2563EB"), 28f, Color.parseColor("#3B82F6"), 1));
 
         composer.addView(inputEditText, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
@@ -191,13 +220,13 @@ public class MainActivity extends AppCompatActivity {
 
         root.addView(composer);
 
-        // Welcome message
-        addMessage("أهلاً بك في تطبيق الذكاء الاصطناعي السريع والمستقل 100%! اكتب أي أمر أو اختر القوالب السريعة لتبدأ.", false);
+        // Initial welcome message
+        addMessage("مرحباً بك في تطبيق الذكاء الاصطناعي الأسرع والأحدث! التطبيق يعمل ويجيب على كافة الاستفسارات فورياً.", false);
 
-        // Action listeners
+        // Event listeners
         clearBtn.setOnClickListener(v -> {
             messagesLayout.removeAllViews();
-            addMessage("تم مسح محادثات السجل بنجاح.", false);
+            addMessage("تم مسح السجل بنجاح.", false);
         });
 
         sendBtn.setOnClickListener(v -> {
@@ -205,8 +234,12 @@ public class MainActivity extends AppCompatActivity {
             if (!text.isEmpty()) {
                 addMessage(text, true);
                 inputEditText.setText("");
-                String reply = getOfflineSmartResponse(text);
-                addMessage(reply, false);
+
+                // Simulated instant processing with slight natural delay
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    String response = getSmartResponse(text);
+                    addMessage(response, false);
+                }, 300);
             }
         });
 

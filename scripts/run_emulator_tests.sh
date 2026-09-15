@@ -55,7 +55,14 @@ for ITEM in android_app khaled_android; do
   test -n "${PKG}"
 
   INSTALLED=0
-  for attempt in 1 2 3; do
+  for attempt in 1 2 3 4; do
+    echo "Checking package manager status before install (attempt ${attempt})..."
+    if ! "${ADB}" shell pm list packages >/dev/null 2>&1; then
+      echo "Package manager service unresponsive. Re-triggering package manager..."
+      "${ADB}" shell settings put global package_verifier_enable 0 2>/dev/null || true
+      sleep 3
+    fi
+
     if "${ADB}" install -r -g -t --user 0 "${APK}"; then
       INSTALLED=1
       break

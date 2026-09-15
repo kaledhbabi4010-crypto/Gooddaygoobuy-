@@ -326,6 +326,11 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
+    private String cleanSearchQuery(String text) {
+        String cleaned = text.replaceAll("(?i)^(ابحث|بحث|search)\\s+(لي\\s+في\\s+الإنترنت\\s+(بدقة\\s+)?عن[:\\s]*|عن[:\\s]*)?", "").trim();
+        return cleaned.isEmpty() ? text : cleaned;
+    }
+
     private void processCommand(String command) {
         if (!isUnlocked) {
             promptForPin(() -> processCommand(command));

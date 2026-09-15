@@ -1,40 +1,10 @@
 {
-  "schema": "khaled-llm-provider-v2",
-  "default_provider": "groq",
-  "fallback_providers": ["openrouter", "qwen", "local-test"],
-  "providers": {
-    "groq": {
-      "model": "llama-3.3-70b-versatile",
-      "api_key_env": "GROQ_API_KEY",
-      "enabled": true,
-      "speed": "ultra_fast"
-    },
-    "openrouter": {
-      "model": "openrouter/qwen/qwen3-235b-a22b-thinking-2507",
-      "api_key_env": "OPENROUTER_API_KEY",
-      "enabled": true,
-      "speed": "fast"
-    },
-    "qwen": {
-      "model": "qwen-max",
-      "api_key_env": "QWEN_API_KEY",
-      "enabled": true,
-      "speed": "balanced"
-    },
-    "custom_openai": {
-      "model": "custom-model",
-      "api_key_env": "CUSTOM_OPENAI_API_KEY",
-      "base_url_env": "CUSTOM_OPENAI_BASE_URL",
-      "enabled": false,
-      "speed": "custom"
-    }
-  },
-  "web_research": {
-    "enabled": true,
-    "legal_boundaries_only": true,
-    "sources": ["duckduckgo", "wikipedia", "jina_reader"],
-    "respect_robots_txt": true
-  },
+  "schema": "khaled-llm-provider-v1",
+  "provider": "openrouter",
+  "model": "openrouter/qwen/qwen3-235b-a22b-thinking-2507",
+  "api_key_environment": "OPENROUTER_API_KEY",
+  "api_key_embedded": false,
+  "live_call_verified": false,
   "truth_policy": {
     "provider_required": true,
     "no_fake_success": true,

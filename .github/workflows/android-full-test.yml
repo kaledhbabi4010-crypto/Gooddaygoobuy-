@@ -72,7 +72,6 @@ jobs:
 
           ls -lh android_app/app/build/outputs/apk/debug/app-debug.apk
           ls -lh khaled_android/app/build/outputs/apk/debug/app-debug.apk
-
       - name: Verify APKs
         shell: bash
         run: |
@@ -105,18 +104,9 @@ jobs:
           ram-size: 4096M
           heap-size: 512M
           disk-size: 8G
-          emulator-options: >-
-            -no-window
-            -gpu swiftshader_indirect
-            -noaudio
-            -no-boot-anim
-            -camera-back none
-            -camera-front none
-          disable-animations: true
-          script: |
-            set -e
-            mkdir -p evidence
-            bash scripts/run_emulator_tests.sh
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          disable-animations: false
+          script: bash scripts/run_emulator_tests.sh
 
       - name: Upload Android evidence
         if: always()
@@ -125,7 +115,6 @@ jobs:
           name: khaled-android-evidence
           path: evidence/
           if-no-files-found: warn
-
       - name: Huawei compatibility audit
         shell: bash
         run: |

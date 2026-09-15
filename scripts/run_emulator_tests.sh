@@ -27,6 +27,17 @@ fi
 
 echo "BOOT: PASS"
 
+echo "WAIT FOR PACKAGE MANAGER SERVICE"
+for i in $(seq 1 30); do
+  if "$ADB" shell pm path android 2>/dev/null | grep -q "package:" || "$ADB" shell pm list packages 2>/dev/null | grep -q "package:"; then
+    echo "PM SERVICE: READY"
+    break
+  fi
+  sleep 3
+done
+
+"$ADB" shell settings put global package_verifier_enable 0 2>/dev/null || true
+
 for ITEM in android_app khaled_android; do
   APK="${GITHUB_WORKSPACE:-.}/$ITEM/app/build/outputs/apk/debug/app-debug.apk"
   test -f "$APK" || { echo "APK: FAIL $ITEM"; exit 1; }
@@ -35,7 +46,23 @@ for ITEM in android_app khaled_android; do
   PKG="$("$AAPT" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
   test -n "$PKG"
 
-  "$ADB" install -r "$APK"
+  INSTALLED="0"
+  for attempt in $(seq 1 5); do
+    if "$ADB" install -r "$APK"; then
+      INSTALLED="1"
+      break
+    fi
+    echo "INSTALL ATTEMPT $attempt FAILED, RETRYING..."
+    "$ADB" shell pm list packages >/dev/null 2>&1 || true
+    sleep 5
+  done
+
+  if [ "$INSTALLED" != "1" ]; then
+    echo "INSTALL: FAIL $ITEM"
+    "$ADB" logcat -d > "evidence/${ITEM}_install_fail_logcat.txt" || true
+    exit 1
+  fi
+
   "$ADB" logcat -c
 
   ACT="$("$ADB" shell cmd package resolve-activity --brief "$PKG" | tail -1 | tr -d '\r')"

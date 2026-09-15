@@ -1,4 +1,3 @@
-
 plugins {
     id 'com.android.application'
 }
@@ -10,7 +9,7 @@ android {
     defaultConfig {
         applicationId "com.quickservice.giant"
         minSdk 23
-        targetSdk 35
+        targetSdk 34
         versionCode 1
         versionName '1.0'
 

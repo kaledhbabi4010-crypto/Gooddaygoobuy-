@@ -131,7 +131,12 @@ public class MainActivity extends AppCompatActivity {
             conn.setReadTimeout(5000);
             conn.setDoOutput(true);
 
-            String payload = "{\"messages\":[{\"role\":\"user\",\"content\":\"" + prompt.replace("\"", "\\\"") + "\"}]}";
+            String safePrompt = prompt.replace("\\", "\\\\")
+                                      .replace("\"", "\\\"")
+                                      .replace("\n", "\\n")
+                                      .replace("\r", "\\r")
+                                      .replace("\t", "\\t");
+            String payload = "{\"messages\":[{\"role\":\"user\",\"content\":\"" + safePrompt + "\"}]}";
             byte[] inputBytes = payload.getBytes("UTF-8");
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(inputBytes, 0, inputBytes.length);

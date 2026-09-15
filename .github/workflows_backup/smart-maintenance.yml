@@ -1,11 +1,6 @@
 name: إصلاح تلقائي موثوق
 
 on:
-
-concurrency:
-  group: repair-smart-maintenance-${{ github.ref }}
-  cancel-in-progress: true
-
   push:
     branches: [main, master]
   pull_request:
@@ -18,10 +13,10 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       # هنا ضع أوامر البناء الخاصة بمشروعك
       # مثال لمشروع Android:
       - name: إعداد Java
@@ -29,7 +24,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-      
+
       - name: بناء المشروع
         id: build
         shell: bash

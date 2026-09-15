@@ -1,19 +1,11 @@
-name: Gemini Invoke
+name: gemini-invoke (Disabled / Manual Only)
 
 on:
   workflow_dispatch:
-  workflow_call:
-
-permissions:
-  contents: read
 
 jobs:
-  invoke:
+  disabled-placeholder:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    if: false
     steps:
-      - name: Report status
-        run: |
-          echo "Gemini Invoke: valid minimal workflow."
-          echo "The full Gemini self-repair flow lives in gemini-agent.yml."
+      - run: echo "Workflow disabled per user command to focus on Web AI Platform."

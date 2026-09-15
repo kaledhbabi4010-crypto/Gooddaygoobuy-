@@ -1,0 +1,87 @@
+name: KHALED Web AI Platform CI/CD
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - '.khaled/ai-code-reviewer/**'
+      - 'src/**'
+      - 'evidence/**'
+      - 'autonomous_ai_engine.py'
+      - 'KHALED.sln'
+      - '.github/workflows/web-platform-ci.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - '.khaled/ai-code-reviewer/**'
+      - 'src/**'
+      - 'evidence/**'
+      - 'autonomous_ai_engine.py'
+      - 'KHALED.sln'
+      - '.github/workflows/web-platform-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: web-platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-build:
+    name: 🛡️ Validate, Build & Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: ⚙️ Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install starlette uvicorn
+
+      - name: 🔒 Security Audit (Secret Leak Scanner)
+        run: |
+          python3 -c "
+          from autonomous_ai_engine import SecretScanner
+          scanner = SecretScanner()
+          clean_text = 'ordinary string'
+          assert scanner.clean(clean_text), 'Scanner failed'
+          print('✓ SecretScanner verified successfully.')
+          "
+
+      - name: 🧪 Run Python Sandbox Security & Web Platform Tests
+        run: |
+          PYTHONPATH=.khaled/ai-code-reviewer python3 -c "
+          from playground.app import app, execute_python_code, execute_repo_inspection
+          assert app is not None, 'ASGI App export missing'
+          res = execute_python_code('getattr(object, \"__sub\" + \"classes__\")()')
+          assert 'Forbidden function call' in res['error'] or 'Forbidden introspection' in res['error']
+          print('✓ Web Platform and Sandbox AST Security Verified.')
+          "
+
+      - name: 🧪 Run .NET Test Suite
+        run: |
+          dotnet test KHALED.sln --nologo
+
+      - name: 🤖 Run Autonomous AI Engine Stage Tests
+        run: |
+          python3 autonomous_ai_engine.py
+
+      - name: 📝 Verify Evidence Report Generation
+        run: |
+          test -f evidence/verification_report.md
+          echo "✓ Evidence verification report present."

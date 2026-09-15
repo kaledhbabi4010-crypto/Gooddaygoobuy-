@@ -1,11 +1,6 @@
 name: KHALED - Workflow Auto Detect and Repair
 
 on:
-
-concurrency:
-  group: repair-groq-gemini-self-repair-test-${{ github.ref }}
-  cancel-in-progress: true
-
   push:
     branches:
       - groq-real-repair-test

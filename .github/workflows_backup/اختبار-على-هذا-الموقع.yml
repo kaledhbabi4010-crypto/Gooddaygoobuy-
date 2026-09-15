@@ -1,11 +1,6 @@
 name: "اختبار على هذا الموقع"
 
 on:
-
-concurrency:
-  group: repair-اختبار-على-هذا-الموقع-${{ github.ref }}
-  cancel-in-progress: true
-
   workflow_dispatch:
     inputs:
       run_id:

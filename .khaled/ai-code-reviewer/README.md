@@ -148,13 +148,13 @@ Paste any public GitHub PR URL and get an AI review instantly:
 git clone https://github.com/mara-werils/ai-code-reviewer.git
 cd ai-code-reviewer
 pip install . uvicorn starlette
-export GROQ_API_KEY=gsk_...
-export GITHUB_TOKEN=ghp_...
+export GROQ_API_KEY=gsk_example_...
+export GITHUB_TOKEN=ghp_example_...
 uvicorn playground.app:app --port 8000
 
 # Or with Docker
 docker build -t pr-reviewer-playground playground/
-docker run -p 8000:8000 -e GROQ_API_KEY=gsk_... -e GITHUB_TOKEN=ghp_... pr-reviewer-playground
+docker run -p 8000:8000 -e GROQ_API_KEY=gsk_example_... -e GITHUB_TOKEN=ghp_example_... pr-reviewer-playground
 ```
 
 Open http://localhost:8000 — paste a PR URL, get a review. Share the link with your team.
@@ -452,7 +452,7 @@ Review PRs locally or in any CI:
 pip install pr-reviewer
 
 # Review a GitHub PR
-export GITHUB_TOKEN=ghp_...
+export GITHUB_TOKEN=ghp_example_...
 export OPENAI_API_KEY=sk-...
 pr-reviewer review --repo owner/name --pr 42
 

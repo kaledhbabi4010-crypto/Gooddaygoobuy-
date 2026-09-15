@@ -1,453 +1,387 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Code Reviewer — Try It Free</title>
-    <meta name="description" content="Paste any GitHub PR URL and get an AI code review in seconds. Free, no signup required.">
-    <meta property="og:title" content="AI Code Reviewer — Try It Free">
-    <meta property="og:description" content="Paste any GitHub PR URL and get an AI code review in seconds. Free, no signup.">
-    <meta property="og:type" content="website">
+    <title>منصة KHALED AI الذكية</title>
+    <!-- Highlight.js & FontAwesome for Code Syntax & Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-dark: #0f172a;
+            --panel-bg: #1e293b;
+            --sidebar-bg: #0b1120;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --user-msg: #2563eb;
+            --ai-msg: #1e293b;
+        }
 
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 260px;
+            background: var(--sidebar-bg);
+            border-left: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            align-items: center;
+            padding: 16px;
         }
 
-        .container {
-            max-width: 720px;
-            width: 100%;
-            padding: 0 20px;
-        }
-
-        header {
-            text-align: center;
-            padding: 60px 0 30px;
-        }
-
-        h1 {
-            font-size: 2.2rem;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-
-        h1 span { color: #a78bfa; }
-
-        .subtitle {
-            color: #8b949e;
-            font-size: 1.1rem;
-            margin-bottom: 24px;
-        }
-
-        .badge-row {
-            display: flex;
-            gap: 8px;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin-bottom: 12px;
-        }
-
-        .badge {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 20px;
-            padding: 4px 12px;
-            font-size: 0.8rem;
-            color: #8b949e;
-        }
-
-        .badge b { color: #e6edf3; }
-
-        /* Input area */
-        .input-section {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 24px;
-        }
-
-        .input-row {
-            display: flex;
-            gap: 12px;
-        }
-
-        input[type="text"] {
-            flex: 1;
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 12px 16px;
-            color: #e6edf3;
-            font-size: 1rem;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-
-        input[type="text"]:focus {
-            border-color: #a78bfa;
-        }
-
-        input[type="text"]::placeholder {
-            color: #484f58;
-        }
-
-        button {
-            background: #a78bfa;
-            color: #0d1117;
-            border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
-            white-space: nowrap;
-        }
-
-        button:hover { background: #c4b5fd; }
-        button:disabled {
-            background: #30363d;
-            color: #484f58;
-            cursor: not-allowed;
-        }
-
-        .hint {
-            color: #484f58;
-            font-size: 0.82rem;
-            margin-top: 10px;
-        }
-
-        /* Results */
-        .result-section {
-            display: none;
-            margin-bottom: 40px;
-        }
-
-        .result-section.visible { display: block; }
-
-        .result-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }
-
-        .result-header h2 {
+        .brand {
             font-size: 1.2rem;
-            font-weight: 600;
-        }
-
-        .result-meta {
+            font-weight: 700;
+            color: var(--text-main);
             display: flex;
-            gap: 12px;
-            font-size: 0.82rem;
-            color: #8b949e;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
         }
 
-        .result-meta span b { color: #e6edf3; }
-
-        .result-body {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 20px;
-            font-size: 0.92rem;
-            line-height: 1.6;
-            overflow-x: auto;
-        }
-
-        .result-body h2 { font-size: 1.1rem; margin: 16px 0 8px; }
-        .result-body h2:first-child { margin-top: 0; }
-        .result-body blockquote {
-            border-left: 3px solid #a78bfa;
-            padding-left: 12px;
-            color: #8b949e;
-            margin: 8px 0;
-        }
-        .result-body code {
-            background: #0d1117;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.85em;
-        }
-        .result-body pre {
-            background: #0d1117;
+        .new-chat-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
             padding: 12px;
             border-radius: 8px;
-            overflow-x: auto;
-            margin: 8px 0;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
-        .result-body table { width: 100%; border-collapse: collapse; }
-        .result-body td, .result-body th {
-            padding: 6px 8px;
-            border-bottom: 1px solid #30363d;
-            text-align: left;
+        .new-chat-btn:hover { background: var(--accent-hover); }
+
+        .session-list {
+            margin-top: 20px;
+            flex: 1;
+            overflow-y: auto;
+        }
+        .session-item {
+            padding: 10px 12px;
+            border-radius: 6px;
+            color: var(--text-muted);
+            cursor: pointer;
+            margin-bottom: 6px;
+            font-size: 0.9rem;
+            transition: 0.2s;
+
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .session-item.active, .session-item:hover {
+            background: var(--panel-bg);
+            color: var(--text-main);
         }
 
-        .comment-card {
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 14px;
-            margin-bottom: 10px;
+        /* Main Chat Area */
+        .main-chat {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
         }
 
-        .comment-header {
+        .header {
+            background: var(--panel-bg);
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
-            margin-bottom: 6px;
-            font-size: 0.82rem;
+            align-items: center;
         }
 
-        .comment-path { color: #a78bfa; font-family: monospace; }
-
-        .severity-critical { color: #f85149; font-weight: 700; }
-        .severity-warning { color: #d29922; font-weight: 600; }
-        .severity-suggestion { color: #3fb950; }
-        .severity-info { color: #8b949e; }
-
-        .comment-body {
-            color: #c9d1d9;
-            line-height: 1.5;
+        .status-badge {
+            background: #065f46;
+            color: #34d399;
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 0.8rem;
+            font-weight: 600;
         }
 
-        /* Error */
-        .error {
-            background: #1c0f0f;
-            border: 1px solid #f8514933;
-            border-radius: 8px;
-            padding: 14px;
-            color: #f85149;
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
         }
 
-        /* Loading */
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #8b949e;
+        .message-row {
+            display: flex;
+            flex-direction: column;
+            max-width: 80%;
+        }
+        .message-row.user { align-self: flex-start; }
+        .message-row.assistant { align-self: flex-end; }
+
+        .message-header {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            margin-bottom: 4px;
         }
 
-        .spinner {
-            display: inline-block;
-            width: 24px;
-            height: 24px;
-            border: 3px solid #30363d;
-            border-top-color: #a78bfa;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin-bottom: 12px;
+        .message-bubble {
+            padding: 14px 18px;
+            border-radius: 12px;
+            line-height: 1.6;
+            font-size: 0.95rem;
+            border: 1px solid var(--border);
+        }
+        .message-row.user .message-bubble {
+            background: var(--user-msg);
+            color: white;
+            border: none;
+        }
+        .message-row.assistant .message-bubble {
+            background: var(--ai-msg);
+            color: var(--text-main);
         }
 
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        /* CTA */
-        .cta {
-            text-align: center;
-            padding: 40px 0;
-            border-top: 1px solid #30363d;
-            margin-top: 20px;
+        /* Tools Display Box */
+        .tool-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            font-size: 0.85rem;
+            color: #38bdf8;
         }
 
-        .cta h3 { margin-bottom: 8px; }
-        .cta p { color: #8b949e; margin-bottom: 16px; }
+        /* Code & Pre */
+        pre {
+            background: #090d16;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 10px 0;
+            position: relative;
+        }
+        code { font-family: monospace; }
 
-        .cta-buttons {
+        .copy-btn {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            background: #334155;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+
+        /* Composer Bar */
+        .composer {
+            padding: 16px 24px;
+            background: var(--panel-bg);
+            border-top: 1px solid var(--border);
             display: flex;
             gap: 12px;
-            justify-content: center;
-            flex-wrap: wrap;
+            align-items: center;
         }
 
-        .cta-buttons a {
-            display: inline-block;
-            padding: 10px 20px;
+        .input-box {
+            flex: 1;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
             border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
+            padding: 12px 16px;
+            color: white;
             font-size: 0.95rem;
+            outline: none;
         }
+        .input-box:focus { border-color: var(--accent); }
 
-        .btn-primary {
-            background: #a78bfa;
-            color: #0d1117;
+        .send-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
         }
+        .send-btn:hover { background: var(--accent-hover); }
 
-        .btn-secondary {
-            background: #161b22;
-            border: 1px solid #30363d;
-            color: #e6edf3;
+        .tool-buttons {
+            display: flex;
+            gap: 8px;
+            padding: 8px 24px;
+            background: var(--panel-bg);
+            border-top: 1px solid var(--border);
         }
-
-        footer {
-            text-align: center;
-            padding: 20px;
-            color: #484f58;
-            font-size: 0.82rem;
+        .tool-chip {
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 0.8rem;
+            cursor: pointer;
         }
-
-        footer a { color: #8b949e; text-decoration: none; }
-        footer a:hover { color: #a78bfa; }
-
-        @media (max-width: 600px) {
-            h1 { font-size: 1.6rem; }
-            .input-row { flex-direction: column; }
-            header { padding: 40px 0 20px; }
-        }
+        .tool-chip:hover { color: white; border-color: var(--accent); }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1><span>AI Code Reviewer</span> Playground</h1>
-            <p class="subtitle">Paste any GitHub PR URL. Get an AI review in seconds. Free.</p>
-            <div class="badge-row">
-                <span class="badge"><b>$0.001</b>/review</span>
-                <span class="badge"><b>5</b> LLM providers</span>
-                <span class="badge"><b>MIT</b> licensed</span>
-                <span class="badge"><b>No signup</b> required</span>
-            </div>
-        </header>
 
-        <div class="input-section">
-            <div class="input-row">
-                <input type="text" id="pr-url" placeholder="https://github.com/owner/repo/pull/123" autofocus>
-                <button id="review-btn" onclick="runReview()">Review</button>
+    <div class="sidebar">
+        <div class="brand">🤖 منصة KHALED AI</div>
+        <button class="new-chat-btn" onclick="startNewChat()">+ محادثة جديدة</button>
+        <div class="session-list" id="session-list"></div>
+    </div>
+
+    <div class="main-chat">
+        <div class="header">
+            <div>
+                <h3 id="current-session-title">محادثة عامة</h3>
+                <small style="color:var(--text-muted)">نموذج الذكاء الاصطناعي السحابي والأدوات المباشرة</small>
             </div>
-            <p class="hint">Works with any public GitHub pull request. Reviews are powered by Llama 3.3 70B via Groq.</p>
+            <span class="status-badge">● السيرفر أونلاين ومؤمن 100%</span>
         </div>
 
-        <div id="loading" class="loading" style="display:none">
-            <div class="spinner"></div>
-            <p>Reviewing PR... usually takes 5-15 seconds</p>
+        <div class="messages-container" id="messages-container"></div>
+
+        <div class="tool-buttons">
+            <span class="tool-chip" onclick="triggerTool('web_search', 'ما هي عاصمة فرنسا؟')">🔍 بحث الويب</span>
+            <span class="tool-chip" onclick="triggerTool('python_interpreter', 'print(2**10)')">🐍 مفسر Python</span>
+            <span class="tool-chip" onclick="triggerTool('repo_inspector', 'list_files')">📁 فحص المستودع</span>
         </div>
 
-        <div id="error-section" class="result-section">
-            <div class="error" id="error-msg"></div>
-        </div>
-
-        <div id="result-section" class="result-section">
-            <div class="result-header">
-                <h2>Review Result</h2>
-                <div class="result-meta">
-                    <span>Cost: <b id="meta-cost">—</b></span>
-                    <span>Time: <b id="meta-time">—</b></span>
-                    <span>Model: <b id="meta-model">—</b></span>
-                </div>
-            </div>
-
-            <div id="summary-card" class="comment-card" style="margin-bottom:16px">
-                <div class="comment-body" id="summary-text"></div>
-            </div>
-
-            <div id="comments-list"></div>
-        </div>
-
-        <div class="cta">
-            <h3>Add AI reviews to your repo in 30 seconds</h3>
-            <p>One workflow file. Zero config. Works with GPT-4o, Claude, Llama, Gemini, Ollama.</p>
-            <div class="cta-buttons">
-                <a href="https://github.com/mara-werils/ai-code-reviewer#quick-start" class="btn-primary" target="_blank">Get Started</a>
-                <a href="https://github.com/mara-werils/ai-code-reviewer" class="btn-secondary" target="_blank">Star on GitHub</a>
-            </div>
+        <div class="composer">
+            <input type="text" id="user-input" class="input-box" placeholder="اكتب سؤالك، استفسارك أونلاين، أو اختر أداة للتنفيذ..." autofocus>
+            <button class="send-btn" id="send-btn" onclick="sendMsg()">إرسال</button>
         </div>
     </div>
 
-    <footer>
-        <a href="https://github.com/mara-werils/ai-code-reviewer">AI Code Reviewer</a> — free, open source, MIT licensed.
-    </footer>
-
     <script>
-    const input = document.getElementById('pr-url');
-    const btn = document.getElementById('review-btn');
-    const loading = document.getElementById('loading');
-    const errorSection = document.getElementById('error-section');
-    const errorMsg = document.getElementById('error-msg');
-    const resultSection = document.getElementById('result-section');
+        let currentSession = 'session_' + Date.now();
+        const msgContainer = document.getElementById('messages-container');
+        const inputField = document.getElementById('user-input');
 
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') runReview();
-    });
+        inputField.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendMsg();
+        });
 
-    async function runReview() {
-        const url = input.value.trim();
-        if (!url) { input.focus(); return; }
-
-        // Reset
-        errorSection.classList.remove('visible');
-        resultSection.classList.remove('visible');
-        loading.style.display = 'block';
-        btn.disabled = true;
-        btn.textContent = 'Reviewing...';
-
-        try {
-            const resp = await fetch('/api/review', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url }),
-            });
-
-            const data = await resp.json();
-
-            if (!resp.ok) {
-                throw new Error(data.error || `HTTP ${resp.status}`);
-            }
-
-            // Show result
-            document.getElementById('meta-cost').textContent = `$${data.cost_usd.toFixed(4)}`;
-            document.getElementById('meta-time').textContent = `${(data.duration_ms / 1000).toFixed(1)}s`;
-            document.getElementById('meta-model').textContent = data.model;
-
-            const risk = data.risk_level;
-            const riskColor = risk === 'high' ? '#f85149' : risk === 'medium' ? '#d29922' : '#3fb950';
-            document.getElementById('summary-text').innerHTML =
-                `<strong style="color:${riskColor}">${risk.toUpperCase()} risk</strong> · ${data.category} · ${data.comments_count} comments<br><br>${escapeHtml(data.summary)}`;
-
-            // Comments
-            const list = document.getElementById('comments-list');
-            list.innerHTML = '';
-
-            if (data.comments.length === 0) {
-                list.innerHTML = '<div class="comment-card"><div class="comment-body" style="color:#3fb950">No issues found. This PR looks good!</div></div>';
-            } else {
-                data.comments.forEach(c => {
-                    const card = document.createElement('div');
-                    card.className = 'comment-card';
-                    card.innerHTML = `
-                        <div class="comment-header">
-                            <span class="comment-path">${escapeHtml(c.path)}:${c.line}</span>
-                            <span class="severity-${c.severity}">${c.severity.toUpperCase()}</span>
-                        </div>
-                        <div class="comment-body">${escapeHtml(c.body)}</div>
-                    `;
-                    list.appendChild(card);
-                });
-            }
-
-            resultSection.classList.add('visible');
-
-        } catch (e) {
-            errorMsg.textContent = e.message;
-            errorSection.classList.add('visible');
-        } finally {
-            loading.style.display = 'none';
-            btn.disabled = false;
-            btn.textContent = 'Review';
+        function startNewChat() {
+            currentSession = 'session_' + Date.now();
+            msgContainer.innerHTML = '';
+            addMessage('assistant', 'أهلاً بك! أنا جاهز تماماً لمعالجة استفساراتك وتشغيل الأدوات أونلاين.');
+            updateSessionList();
         }
-    }
 
-    function escapeHtml(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
+        function updateSessionList() {
+            const list = document.getElementById('session-list');
+            const item = document.createElement('div');
+            item.className = 'session-item active';
+            item.textContent = currentSession;
+            list.appendChild(item);
+        }
+
+        async function sendMsg(toolName = null, toolArgs = {}) {
+            const text = inputField.value.trim();
+            if (!text && !toolName) return;
+
+            const userText = text;
+            inputField.value = '';
+
+            if (userText) {
+                addMessage('user', userText);
+            }
+
+            const typingId = addMessage('assistant', '🌐 [جاري الاتصال بالسيرفرات ومعالجة البيانات...]');
+
+            try {
+                const resp = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: currentSession,
+                        message: userText,
+                        tool: toolName,
+                        tool_args: toolArgs
+                    })
+                });
+
+                const data = await resp.json();
+                document.getElementById(typingId).remove();
+
+                if (!resp.ok) {
+                    addMessage('assistant', '❌ حدث خطأ: ' + (data.error || 'فشل الاتصال'));
+                    return;
+                }
+
+                let toolsHtml = '';
+                if (data.tools_executed && data.tools_executed.length > 0) {
+                    data.tools_executed.forEach(t => {
+                        toolsHtml += `<div class="tool-box">🛠️ **أداة حقيقية منفذة:** ${t.tool}<br><code>${JSON.stringify(t.results || t.output || t.files, null, 2)}</code></div>`;
+                    });
+                }
+
+                addMessage('assistant', toolsHtml + marked.parse(data.message));
+                hljs.highlightAll();
+
+            } catch (err) {
+                document.getElementById(typingId).remove();
+                addMessage('assistant', '❌ فشل الاتصال بالسيرفر.');
+            }
+        }
+
+        function triggerTool(tool, sampleArg) {
+            if (tool === 'web_search') {
+                sendMsg('web_search', { query: sampleArg });
+            } else if (tool === 'python_interpreter') {
+                sendMsg('python_interpreter', { code: sampleArg });
+            } else if (tool === 'repo_inspector') {
+                sendMsg('repo_inspector', { action: 'list_files', path: '.' });
+            }
+        }
+
+        function addMessage(role, htmlContent) {
+            const id = 'msg_' + Math.random().toString(36).substring(2, 9);
+            const row = document.createElement('div');
+            row.className = `message-row ${role}`;
+            row.id = id;
+
+            const header = document.createElement('div');
+            header.className = 'message-header';
+            header.textContent = role === 'user' ? '👤 أنت' : '🤖 KHALED AI';
+
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            bubble.innerHTML = htmlContent;
+
+            row.appendChild(header);
+            row.appendChild(bubble);
+            msgContainer.appendChild(row);
+
+            msgContainer.scrollTop = msgContainer.scrollHeight;
+            return id;
+        }
+
+        // Init
+        startNewChat();
     </script>
 </body>
 </html>

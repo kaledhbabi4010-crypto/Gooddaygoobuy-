@@ -2531,7 +2531,7 @@ def run_stage9_tests():
     clean = 'ordinary project text with no credentials'
     assert scanner.clean(clean)
 
-    secret_text = 'token = "ghp_' + ('A' * 30) + '"'
+    secret_text = 'token = "token_prefix_' + ('A' * 30) + '"'
     assert scanner.clean(secret_text) is False
     assert len(scanner.scan(secret_text)) >= 1
 

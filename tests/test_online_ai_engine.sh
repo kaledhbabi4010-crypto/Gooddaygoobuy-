@@ -5,11 +5,11 @@ echo "=== Testing Online Cloud AI Engine & Interactive Repair Logic ==="
 
 # 1. Verify Java files syntax and class methods
 echo "[1/3] Checking MainActivity.java class structures..."
-grep -q "fetchCloudAiResponse" android_app/app/src/main/java/com/quickservice/giant/MainActivity.java
+grep -q "fetchPollinationsAi" android_app/app/src/main/java/com/quickservice/giant/MainActivity.java
 grep -q "queryWikipediaCloudApi" android_app/app/src/main/java/com/quickservice/giant/MainActivity.java
 grep -q "processLiveRepairCommand" android_app/app/src/main/java/com/quickservice/giant/MainActivity.java
 
-grep -q "fetchCloudAiResponse" khaled_android/app/src/main/java/com/quickservice/giant/MainActivity.java
+grep -q "fetchPollinationsAi" khaled_android/app/src/main/java/com/quickservice/giant/MainActivity.java
 grep -q "queryWikipediaCloudApi" khaled_android/app/src/main/java/com/quickservice/giant/MainActivity.java
 grep -q "processLiveRepairCommand" khaled_android/app/src/main/java/com/quickservice/giant/MainActivity.java
 

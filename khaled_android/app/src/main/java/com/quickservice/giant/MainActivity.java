@@ -14,7 +14,7 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 
 public class MainActivity extends AppCompatActivity {
-    
+
     // QUICK_SERVICE_SAFETY_GATE
     // Default-deny execution policy.
     // No destructive/system-changing action may execute without
@@ -48,7 +48,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean safetyReadOnly() {
         return !safetyApprovalGranted;
     }
-    
+
 
     private LinearLayout messages;
     private EditText input;

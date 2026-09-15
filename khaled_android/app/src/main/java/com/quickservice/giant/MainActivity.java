@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -61,6 +62,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREFS_NAME = "KHALED_PREFS";
     private static final String KEY_GROQ_API = "GROQ_API_KEY";
     private static final String KEY_OPENROUTER_API = "OPENROUTER_API_KEY";
+    private static final String KEY_OWNER_PIN = "OWNER_PIN";
+    private static final String DEFAULT_PIN = "2026";
+
+    private boolean isUnlocked = false;
 
     private LinearLayout messages;
     private EditText input;
@@ -96,32 +101,85 @@ public class MainActivity extends AppCompatActivity {
         String groqKey = prefs.getString(KEY_GROQ_API, "");
         String openRouterKey = prefs.getString(KEY_OPENROUTER_API, "");
 
+        if (!isUnlocked) {
+            statusBadge.setText("🔒 مقفول (خاص بك فقط)");
+            statusBadge.setTextColor(Color.RED);
+            return;
+        }
+
         if (!groqKey.isEmpty() && !openRouterKey.isEmpty()) {
-            statusBadge.setText("🟢 Groq & OpenRouter متصلان");
+            statusBadge.setText("🟢 خاص بك | Groq & OpenRouter متصلان");
             statusBadge.setTextColor(Color.GREEN);
         } else if (!groqKey.isEmpty()) {
-            statusBadge.setText("🟢 Groq API متصل");
+            statusBadge.setText("🟢 خاص بك | Groq API متصل");
             statusBadge.setTextColor(Color.GREEN);
         } else if (!openRouterKey.isEmpty()) {
-            statusBadge.setText("🟢 OpenRouter متصل");
+            statusBadge.setText("🟢 خاص بك | OpenRouter متصل");
             statusBadge.setTextColor(Color.GREEN);
         } else {
-            statusBadge.setText("🟡 الوضع المحلي (أضف API Key)");
+            statusBadge.setText("🟡 خاص بك | الوضع المحلي (أضف API Key)");
             statusBadge.setTextColor(Color.YELLOW);
         }
     }
 
+    private void promptForPin(Runnable onSuccess) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String ownerPin = prefs.getString(KEY_OWNER_PIN, DEFAULT_PIN);
+
+        EditText pinInput = new EditText(this);
+        pinInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        pinInput.setHint("أدخل رمز PIN المالك...");
+        pinInput.setTextColor(Color.WHITE);
+        pinInput.setHintTextColor(Color.GRAY);
+
+        new AlertDialog.Builder(this)
+            .setTitle("🔒 حماية خاصة بالمالك فقط")
+            .setMessage("هذا التطبيق مخصص لاستخدامك الشخصي فقط. أدخل رمز PIN لإلغاء القفل (الافتراضي: " + DEFAULT_PIN + "):")
+            .setView(pinInput)
+            .setPositiveButton("إلغاء القفل", (dialog, which) -> {
+                String entered = pinInput.getText().toString().trim();
+                if (ownerPin.equals(entered)) {
+                    isUnlocked = true;
+                    updateStatusBadge();
+                    Toast.makeText(this, "تم إلغاء القفل بنجاح - مرحباً بك يا مالك النظام!", Toast.LENGTH_SHORT).show();
+                    if (onSuccess != null) onSuccess.run();
+                } else {
+                    Toast.makeText(this, "⚠️ رمز PIN غير صحيح! الوصول مرفوض.", Toast.LENGTH_LONG).show();
+                }
+            })
+            .setNegativeButton("إلغاء", null)
+            .setCancelable(false)
+            .show();
+    }
+
     private void showApiKeyDialog() {
+        if (!isUnlocked) {
+            promptForPin(this::showApiKeyDialog);
+            return;
+        }
+
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String currentGroq = prefs.getString(KEY_GROQ_API, "");
         String currentOpenRouter = prefs.getString(KEY_OPENROUTER_API, "");
+        String currentPin = prefs.getString(KEY_OWNER_PIN, DEFAULT_PIN);
 
         LinearLayout dialogLayout = new LinearLayout(this);
         dialogLayout.setOrientation(LinearLayout.VERTICAL);
         dialogLayout.setPadding(32, 24, 32, 24);
 
+        TextView labelPin = new TextView(this);
+        labelPin.setText("رمز PIN الخاص بك (لحماية وصولك):");
+        labelPin.setTextColor(Color.WHITE);
+        dialogLayout.addView(labelPin);
+
+        EditText inputPin = new EditText(this);
+        inputPin.setText(currentPin);
+        inputPin.setInputType(InputType.TYPE_CLASS_NUMBER);
+        inputPin.setTextColor(Color.WHITE);
+        dialogLayout.addView(inputPin);
+
         TextView labelGroq = new TextView(this);
-        labelGroq.setText("Groq API Key (Llama-3.3 Ultra Fast):");
+        labelGroq.setText("\nGroq API Key (Llama-3.3 Ultra Fast):");
         labelGroq.setTextColor(Color.WHITE);
         dialogLayout.addView(labelGroq);
 
@@ -145,19 +203,23 @@ public class MainActivity extends AppCompatActivity {
         dialogLayout.addView(inputOR);
 
         new AlertDialog.Builder(this)
-            .setTitle("إدارة مفاتيح الذكاء الاصطناعي (API Keys)")
+            .setTitle("إدارة المفاتيح الخاصة والحماية")
             .setView(dialogLayout)
-            .setPositiveButton("حفظ واستخدام", (dialog, which) -> {
+            .setPositiveButton("حفظ والحماية", (dialog, which) -> {
+                String newPin = inputPin.getText().toString().trim();
                 String gKey = inputGroq.getText().toString().trim();
                 String orKey = inputOR.getText().toString().trim();
 
+                if (newPin.isEmpty()) newPin = DEFAULT_PIN;
+
                 prefs.edit()
+                    .putString(KEY_OWNER_PIN, newPin)
                     .putString(KEY_GROQ_API, gKey)
                     .putString(KEY_OPENROUTER_API, orKey)
                     .apply();
 
                 updateStatusBadge();
-                Toast.makeText(this, "تم حفظ مفاتيح API بنجاح!", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "تم حفظ الإعدادات والحماية الخاصة بنجاح!", Toast.LENGTH_SHORT).show();
             })
             .setNegativeButton("إلغاء", null)
             .show();
@@ -224,12 +286,12 @@ public class MainActivity extends AppCompatActivity {
                     JSONArray choices = resObj.getJSONArray("choices");
                     String reply = choices.getJSONObject(0).getJSONObject("message").getString("content");
 
-                    runOnUiThread(() -> addMessage("⚡ Groq LPU:\n" + reply, false));
+                    runOnUiThread(() -> addMessage("⚡ Groq LPU (خاص بك):\n" + reply, false));
                 } else {
                     runOnUiThread(() -> addMessage("⚠️ خطأ الاتصال بـ Groq API (رمز: " + code + ")", false));
                 }
             } catch (Exception e) {
-                runOnUiThread(() -> addMessage("⚠️ خطأ الشكبة: " + e.getLocalizedMessage(), false));
+                runOnUiThread(() -> addMessage("⚠️ خطأ الشبكة: " + e.getLocalizedMessage(), false));
             }
         }).start();
     }
@@ -265,12 +327,17 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void processCommand(String command) {
+        if (!isUnlocked) {
+            promptForPin(() -> processCommand(command));
+            return;
+        }
+
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String groqKey = prefs.getString(KEY_GROQ_API, "");
         String low = command.toLowerCase();
 
         if (!groqKey.isEmpty()) {
-            addMessage("جاري إرسال الطلب لمحرك Groq LPU السريع...", false);
+            addMessage("جاري إرسال الطلب لمحرك Groq LPU الخاص بك...", false);
             callGroqApi(groqKey, command);
             return;
         }
@@ -291,7 +358,7 @@ public class MainActivity extends AppCompatActivity {
             );
         } else {
             addMessage(
-                "تم استلام الأمر وتمريره لمحرك الذكاء الاصطناعي KHALED Sovereign Core.\n" +
+                "تم استلام الأمر وتمريره لمحرك الذكاء الاصطناعي KHALED Sovereign Core الخاص بك.\n" +
                 "نصيحة: يمكنك إضافة Groq API Key للحصول على سرعة استجابة فائقة ذكية.",
                 false
             );
@@ -311,14 +378,14 @@ public class MainActivity extends AppCompatActivity {
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(12, 8, 12, 8);
 
-        TextView header = title("KHALED AI Mobile", 20);
+        TextView header = title("KHALED AI (Private)", 20);
 
         statusBadge = new TextView(this);
         statusBadge.setTextSize(12);
         statusBadge.setPadding(12, 0, 12, 0);
 
         Button apiBtn = new Button(this);
-        apiBtn.setText("مفاتيح API");
+        apiBtn.setText("الإعدادات والحماية");
         apiBtn.setTextSize(12);
         apiBtn.setOnClickListener(v -> showApiKeyDialog());
 
@@ -358,7 +425,7 @@ public class MainActivity extends AppCompatActivity {
         messages.setPadding(12, 12, 12, 12);
 
         addMessage(
-            "مرحبًا، أنا KHALED AI Sovereign System.\nيمكنك إضافة مفاتيح Groq وOpenRouter للعمل بأقصى سرعة ودقة.",
+            "مرحبًا، هذا نظام KHALED AI الخاص بك وحدك (مؤمن برمز PIN).\nانقر على الإعدادات لإدخال مفاتيحك الخاصة كمالك للنظام.",
             false
         );
 
@@ -415,5 +482,8 @@ public class MainActivity extends AppCompatActivity {
         root.addView(composer);
 
         setContentView(root);
+
+        // Prompt PIN unlock on start
+        promptForPin(null);
     }
 }

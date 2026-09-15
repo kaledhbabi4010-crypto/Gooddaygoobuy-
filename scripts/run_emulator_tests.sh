@@ -82,6 +82,8 @@ for ITEM in android_app khaled_android; do
       break
     fi
     echo "Install attempt $attempt failed for $ITEM ($INSTALL_OUT). Retrying in 8s..."
+    # Re-check and re-trigger package manager service readiness if service was transiently lost
+    "$ADB" shell pm path android >/dev/null 2>&1 || true
     sleep 8
   done
 

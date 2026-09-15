@@ -316,12 +316,18 @@ public class MainActivity extends AppCompatActivity {
             headerLayout.setBackgroundColor(Color.parseColor("#1E293B"));
             headerLayout.setGravity(Gravity.CENTER_VERTICAL);
 
+            // Visual Logo Icon Badge
+            TextView logoBadgeView = new TextView(this);
+            logoBadgeView.setText("🤖");
+            logoBadgeView.setTextSize(24);
+            logoBadgeView.setPadding(0, 0, 20, 0);
+
             LinearLayout titleContainer = new LinearLayout(this);
             titleContainer.setOrientation(LinearLayout.VERTICAL);
 
             TextView titleView = new TextView(this);
-            titleView.setText("KHALED / Multi-AI Engine");
-            titleView.setTextSize(16);
+            titleView.setText("KHALED / AI Engine");
+            titleView.setTextSize(17);
             titleView.setTextColor(Color.WHITE);
 
             statusView = new TextView(this);
@@ -346,6 +352,8 @@ public class MainActivity extends AppCompatActivity {
             clearBtn.setTextColor(Color.parseColor("#F87171"));
             clearBtn.setPadding(16, 8, 16, 8);
             clearBtn.setBackground(createShape(Color.parseColor("#451A1A"), 16f, Color.parseColor("#7F1D1D"), 1));
+
+            headerLayout.addView(logoBadgeView);
 
             LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
             headerLayout.addView(titleContainer, titleLp);

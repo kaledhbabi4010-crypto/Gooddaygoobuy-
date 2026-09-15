@@ -6,6 +6,9 @@
     <application
         android:allowBackup="true"
         android:label="مشروع الخدمة السريعة العملاق"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:logo="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 

@@ -48,7 +48,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean safetyReadOnly() {
         return !safetyApprovalGranted;
     }
-    
+
 
     private LinearLayout messages;
     private EditText input;

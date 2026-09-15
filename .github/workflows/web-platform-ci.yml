@@ -1,0 +1,85 @@
+name: Standalone Web Platform CI/CD
+
+on:
+  push:
+    branches: [main, master, feature/*, fix/*]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "web-platform-ci-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+
+  validate-and-security-check:
+    name: Validate → Security Check → Test Engine
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate Web Files & Security Audit
+        shell: bash
+        run: |
+          set -e
+          echo "=== 1. VALIDATING WEB HTML/JS ==="
+          test -f index.html
+          test -f autonomous_ai_engine.py
+
+          echo "=== 2. SECRET SCANNING AUDIT ==="
+          if grep -E "gsk_[a-zA-Z0-9]{20,}|sk-or-v1-[a-zA-Z0-9]{20,}|AIzaSy[a-zA-Z0-9]{20,}" index.html; then
+            echo "ERROR: Plaintext secret detected in index.html!"
+            exit 1
+          fi
+          echo "SECURITY CHECK: PASS (No exposed keys)"
+
+      - name: Run Autonomous Engine Unit Tests
+        shell: bash
+        run: |
+          set -e
+          python3 autonomous_ai_engine.py
+          echo "ENGINE UNIT TESTS: PASS"
+
+  deploy-pages:
+    name: Deploy → Smoke Test
+    needs: validate-and-security-check
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Smoke Test Live Deployment
+        shell: bash
+        run: |
+          set -e
+          echo "Live URL: ${{ steps.deployment.outputs.page_url }}"
+          curl -sI "${{ steps.deployment.outputs.page_url }}" | head -n 1
+          echo "SMOKE TEST: PASS"

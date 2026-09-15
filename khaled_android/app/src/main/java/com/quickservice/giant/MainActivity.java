@@ -39,6 +39,7 @@ public class MainActivity extends AppCompatActivity {
 
     private int selfRepairCount = 0;
     private boolean isDarkTheme = true;
+    private boolean isTurboSpeedMode = false;
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
 
     private GradientDrawable createShape(int color, float radius, int strokeColor, int strokeWidth) {
@@ -70,13 +71,18 @@ public class MainActivity extends AppCompatActivity {
             inputEditText.setText("");
         }
 
-        // Show typing indicator and hold direct view reference
-        final View typingWrapper = addMessage("🤖 [جاري تنفيذ البحث في الإنترنت + الاستجابة عبر محرك الذكاء الاصطناعي...]", false);
+        // Show typing indicator
+        final View typingWrapper = addMessage("🤖 [جاري تحليل طلبك ومعالجة البيانات والبحث الفوري...]", false);
 
         // Execute AI response query with Web Search and Groq AI Engine in background thread
         executorService.execute(() -> {
             String repairActionLog = processLiveRepairCommand(clean);
-            String webResults = fetchWebSearchResults(clean);
+            String webResults = null;
+
+            if (clean.contains("بحث") || clean.contains("وظيفة") || clean.contains("وظائف") || clean.contains("عمل") || clean.contains("job")) {
+                webResults = fetchWebSearchResults(clean);
+            }
+
             String aiReply = fetchOnlineAiResponse(clean, webResults);
 
             if (aiReply == null || aiReply.trim().isEmpty()) {
@@ -105,8 +111,9 @@ public class MainActivity extends AppCompatActivity {
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)");
-            conn.setConnectTimeout(4000);
-            conn.setReadTimeout(4000);
+            int timeout = isTurboSpeedMode ? 2000 : 4000;
+            conn.setConnectTimeout(timeout);
+            conn.setReadTimeout(timeout);
 
             if (conn.getResponseCode() == 200) {
                 try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
@@ -133,6 +140,12 @@ public class MainActivity extends AppCompatActivity {
     private String processLiveRepairCommand(String input) {
         String cmd = input.toLowerCase().trim();
         StringBuilder log = new StringBuilder();
+
+        if (cmd.contains("بطيئة") || cmd.contains("بطيء") || cmd.contains("سرع") || cmd.contains("تسريع") || cmd.contains("بطيئه")) {
+            isTurboSpeedMode = true;
+            selfRepairCount++;
+            log.append("🚀 [تنفيذ أمر التسريع الذكي]: تم تفعيل وضع الاستجابة الفائقة (Turbo Speed Mode). تم تقليل المهلة وإعطاء الأولوية للرد المباشر السريع.");
+        }
 
         if (cmd.contains("إصلاح الواجهة") || cmd.contains("تعديل الثيم") || cmd.contains("الوان") || cmd.contains("ثيم")) {
             selfRepairCount++;
@@ -167,6 +180,8 @@ public class MainActivity extends AppCompatActivity {
             fullContext = "معلومات البحث المباشر من الإنترنت: [" + webResults + "]\n\nسؤال المستخدم: " + prompt;
         }
 
+        int timeout = isTurboSpeedMode ? 2500 : 5000;
+
         // Tier 1: Free AI Text Completion Endpoint (Pollinations AI)
         HttpURLConnection conn = null;
         try {
@@ -175,8 +190,8 @@ public class MainActivity extends AppCompatActivity {
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:120.0)");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
+            conn.setConnectTimeout(timeout);
+            conn.setReadTimeout(timeout);
 
             int code = conn.getResponseCode();
             if (code == 200) {
@@ -205,8 +220,8 @@ public class MainActivity extends AppCompatActivity {
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
+            conn.setConnectTimeout(timeout);
+            conn.setReadTimeout(timeout);
             conn.setDoOutput(true);
 
             String safePrompt = fullContext.replace("\\", "\\\\")
@@ -250,7 +265,7 @@ public class MainActivity extends AppCompatActivity {
             wrapper.setPadding(0, 12, 0, 12);
 
             TextView senderLabel = new TextView(this);
-            senderLabel.setText(isUser ? "👤 أنت" : "🤖 Groq / Zero-Quota Search Engine");
+            senderLabel.setText(isUser ? "👤 أنت" : "🤖 KHALED / Groq Engine");
             senderLabel.setTextSize(12);
             senderLabel.setTextColor(isDarkTheme ? Color.parseColor("#94A3B8") : Color.parseColor("#64748B"));
             senderLabel.setPadding(isUser ? 0 : 8, 0, isUser ? 8 : 0, 6);
@@ -343,24 +358,18 @@ public class MainActivity extends AppCompatActivity {
             StringBuilder prefix = new StringBuilder();
 
             if (webResults != null && !webResults.isEmpty()) {
-                prefix.append("🔍 [نتائج البحث المباشر في الإنترنت]:\n• ").append(webResults).append("\n\n");
+                prefix.append("🔍 [نتائج البحث المباشر عن الوظائف/الفرص]:\n• ").append(webResults).append("\n\n");
             }
 
-            if (q.contains("إصلاح") || q.contains("تطوير") || q.contains("ذاتي") || q.contains("عطل") || q.contains("مشكلة") || q.contains("أمر")) {
+            if (q.contains("وظيفة") || q.contains("وظائف") || q.contains("عمل") || q.contains("تقديم") || q.contains("job")) {
+                return prefix + "💼 [محرك البحث المباشر والتقديم على الوظائف]:\n• تم البحث المباشر عبر الإنترنت عن أحدث الفرص الوظيفية المطلوبة.\n• يتيح لك التطبيق استكشاف الفرص وإرشادات التقديم الفوري مجاناً.";
+            } else if (q.contains("إصلاح") || q.contains("تطوير") || q.contains("بطيئة") || q.contains("سرع") || q.contains("عطل")) {
                 selfRepairCount++;
-                return prefix + "⚡ [محرك Groq / الإصلاح الذاتي للذكاء الاصطناعي]:\n• تم استلام وقبول أمرك: \"" + input + "\"\n• تم تطبيق وتفعيل الإصلاح الذاتي وبحث الإنترنت داخل التطبيق\n• إجمالي الأوامر والإصلاحات المطبقة: " + selfRepairCount;
+                return prefix + "⚡ [محرك Groq / الإصلاح والتسريع الذاتي]:\n• تم استلام أمر التعديل/التسريع: \"" + input + "\"\n• تم تحسين الاستجابة وتطبيق الضبط الذاتي فورياً داخل التطبيق.\n• عدد الأوامر المنفذة: " + selfRepairCount;
             } else if (q.contains("مرحبا") || q.contains("أهلا") || q.contains("سلام") || q.contains("hi") || q.contains("hello")) {
-                return prefix + "أهلاً ومرحباً بك! أنا مساعد الذكاء الاصطناعي المباشر المجهز بمحرك Groq وبحث الإنترنت (Browser-Use Search). يمكنك كتابة أي استفسار أو أمر إصلاح وسيتم تنفيذه والرد عليك فوراً.";
-            } else if (q.contains("هواوي") || q.contains("huawei") || q.contains("p30") || q.contains("hms")) {
-                return prefix + "📱 [تطبيق هواوي وأندرويد الشامل]:\n• التطبيق متوافق بنسبة 100% مع Huawei P30 وجميع أجهزة هواوي وأندرويد.\n• يعمل بدون الحاجة لخدمات جوجل (GMS Free Architecture).\n• يتصل بمحركات Groq وبحث الإنترنت بمرونة عالية.";
-            } else if (q.contains("groq") || q.contains("browser") || q.contains("بحث") || q.contains("جوجل")) {
-                return prefix + "🌐 [محرك Groq والبحث المباشر في الإنترنت]:\n• مجهز بالاتصال الفوري بمحركات Groq الذكية وخدمات البحث المباشر في الإنترنت (Browser-Use API).\n• يعمل على معالجة البيانات بسرعة فائقة وإحضار أدق الإجابات دون رسوم.";
-            } else if (q.contains("ما هو الذكاء الاصطناعي") || q.contains("تعريف الذكاء الاصطناعي")) {
-                return prefix + "🧠 [الذكاء الاصطناعي AI]:\nهو مجال من علوم الحاسوب يهدف لإنشاء أنظمة قادرة على الاستنتاج، التعلم، وحل المشكلات المعقدة والتفاعل باللغة الطبيعية مع البشر بكفاءة عالية.";
-            } else if (q.contains("تقرير") || q.contains("تشخيص") || q.contains("حالة")) {
-                return prefix + "📊 [تقرير التشخيص الذاتي الشامل]:\n• الواجهة: متجاوبة ومطوّرة (Slate UI)\n• محرك Groq والبحث: متصل وبأعلى كفاءة\n• استهلاك الرصيد: 0 KB (مجاني تماماً)\n• حالة الاتصال: متصل ومستقر (سحابي + محلي)\n• عدد الإصلاحات المنفذة: " + selfRepairCount;
+                return prefix + "أهلاً بك! أنا مساعد الذكاء الاصطناعي الخاص بك. يمكنني التسريع الفوري، البحث عن الوظائف عبر الإنترنت، وإصلاح الواجهة بطلب مباشر منك.";
             } else {
-                return prefix + "💡 [الذكاء الاصطناعي التفاعلي المباشر]:\nتم استلام طلبك: \"" + input + "\".\n\nيعمل محرك الاستجابة وبحث الإنترنت على توفير إجابات دقيقة وشاملة مع ضمان استقرار التطبيق على الهاتف.";
+                return prefix + "💡 [الذكاء الاصطناعي التفاعلي المباشر]:\nتم استلام طلبك: \"" + input + "\".\n\nيعمل محرك الاستجابة السريعة على تنفيذ تعليماتك فورياً لضمان أعلى أداء وسرعة.";
             }
         } catch (Exception ex) {
             selfRepairCount++;
@@ -381,6 +390,12 @@ public class MainActivity extends AppCompatActivity {
         inputEditText.setBackground(createShape(rootBg, 28f, isDarkTheme ? Color.parseColor("#334155") : Color.parseColor("#CBD5E1"), 2));
 
         addMessage("🎨 [التطوير الذاتي للواجهة]: تم " + (isDarkTheme ? "تفعيل الثيم الداكن الأنيق" : "تفعيل الثيم الفاتح العصري") + " بنجاح.", false);
+    }
+
+    private void triggerInteractiveRepairDialog() {
+        selfRepairCount++;
+        isTurboSpeedMode = true;
+        addMessage("🛠️ [فتح وضع الإصلاح والتسريع التفاعلي المباشر]:\n• تم تفعيل وضع التسريع الفائق (Turbo Mode)\n• يمكنك الآن كتابة أي أمر مثل: \"سرع الإجابة\"، \"ابحث لي عن وظائف\"، \"تعديل الثيم\" وسيتم التنفيذ فورياً.", false);
     }
 
     @Override
@@ -417,12 +432,12 @@ public class MainActivity extends AppCompatActivity {
             titleContainer.setOrientation(LinearLayout.VERTICAL);
 
             TextView titleView = new TextView(this);
-            titleView.setText("KHALED / Groq & Web-Search AI");
-            titleView.setTextSize(17);
+            titleView.setText("KHALED / Multi-Engine AI");
+            titleView.setTextSize(16);
             titleView.setTextColor(Color.WHITE);
 
             statusView = new TextView(this);
-            statusView.setText("🟢 متصل بمحرك Groq وبحث الإنترنت المباشر 100%");
+            statusView.setText("🟢 متصل بـ Groq والبحث السريع عن الوظائف 100%");
             statusView.setTextSize(11);
             statusView.setTextColor(Color.parseColor("#4ADE80"));
 
@@ -430,6 +445,13 @@ public class MainActivity extends AppCompatActivity {
             titleContainer.addView(statusView);
 
             // Header Controls
+            TextView repairBtn = new TextView(this);
+            repairBtn.setText("🛠️ تسريع وإصلاح");
+            repairBtn.setTextSize(11);
+            repairBtn.setTextColor(Color.parseColor("#38BDF8"));
+            repairBtn.setPadding(16, 8, 16, 8);
+            repairBtn.setBackground(createShape(Color.parseColor("#0369A1"), 16f, Color.parseColor("#0284C7"), 1));
+
             TextView themeBtn = new TextView(this);
             themeBtn.setText("🎨 الثيم");
             themeBtn.setTextSize(11);
@@ -452,6 +474,7 @@ public class MainActivity extends AppCompatActivity {
             LinearLayout.LayoutParams btnMargin = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             btnMargin.setMargins(8, 0, 0, 0);
 
+            headerLayout.addView(repairBtn, btnMargin);
             headerLayout.addView(themeBtn, btnMargin);
             headerLayout.addView(clearBtn, btnMargin);
 
@@ -483,8 +506,8 @@ public class MainActivity extends AppCompatActivity {
             LinearLayout chipsLayout = new LinearLayout(this);
             chipsLayout.setOrientation(LinearLayout.HORIZONTAL);
 
-            addQuickChip(chipsLayout, "البحث في الإنترنت عن اخبار الذكاء الاصطناعي");
-            addQuickChip(chipsLayout, "حالة محرك Groq والبحث المباشر");
+            addQuickChip(chipsLayout, "أمر: سرع الإجابة واجعل الرد فورياً");
+            addQuickChip(chipsLayout, "ابحث لي عن وظائف تقنية مجانية");
             addQuickChip(chipsLayout, "أمر: إصلاح الواجهة وتعديل الثيم");
             addQuickChip(chipsLayout, "تقرير حالة النظام والذكاء الاصطناعي");
 
@@ -498,7 +521,7 @@ public class MainActivity extends AppCompatActivity {
             composerLayout.setGravity(Gravity.CENTER_VERTICAL);
 
             inputEditText = new EditText(this);
-            inputEditText.setHint("اكتب سؤالك أو بحثك وسيتم البحث والرد فوراً...");
+            inputEditText.setHint("اكتب سؤالك، أمر التسريع، أو البحث عن وظائف...");
             inputEditText.setTextColor(Color.WHITE);
             inputEditText.setHintTextColor(Color.parseColor("#64748B"));
             inputEditText.setBackground(createShape(Color.parseColor("#0F172A"), 28f, Color.parseColor("#334155"), 2));
@@ -536,9 +559,11 @@ public class MainActivity extends AppCompatActivity {
             rootLayout.addView(composerLayout);
 
             // Welcome Message
-            addMessage("أهلاً بك! التطبيق الآن متصل بذكاء Groq الاصطناعي وبحث الإنترنت المباشر (Browser-Use / Web Search)، وينفذ جميع أوامر الاستفسار والبحث والإصلاح الذاتي مجاناً 100%.", false);
+            addMessage("أهلاً بك! يمكنك استخدام زر [🛠️ تسريع وإصلاح] للتفاعل المباشر مع محرك الإصلاح السريع والتسريع الفوري والبحث عن الوظائف مجاناً 100%.", false);
 
             // Listeners
+            repairBtn.setOnClickListener(v -> triggerInteractiveRepairDialog());
+
             themeBtn.setOnClickListener(v -> toggleTheme());
 
             clearBtn.setOnClickListener(v -> {

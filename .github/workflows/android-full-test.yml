@@ -11,12 +11,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -72,6 +72,7 @@ jobs:
 
           ls -lh android_app/app/build/outputs/apk/debug/app-debug.apk
           ls -lh khaled_android/app/build/outputs/apk/debug/app-debug.apk
+
       - name: Verify APKs
         shell: bash
         run: |
@@ -104,9 +105,18 @@ jobs:
           ram-size: 4096M
           heap-size: 512M
           disk-size: 8G
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -noaudio
+            -no-boot-anim
+            -camera-back none
+            -camera-front none
           disable-animations: true
-          script: bash scripts/run_emulator_tests.sh
+          script: |
+            set -e
+            mkdir -p evidence
+            bash scripts/run_emulator_tests.sh
 
       - name: Upload Android evidence
         if: always()
@@ -115,6 +125,7 @@ jobs:
           name: khaled-android-evidence
           path: evidence/
           if-no-files-found: warn
+
       - name: Huawei compatibility audit
         shell: bash
         run: |

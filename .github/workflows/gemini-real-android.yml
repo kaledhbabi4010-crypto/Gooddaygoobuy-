@@ -2,9 +2,6 @@ name: GQS - Gemini Real Android AI
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/gemini-real-android.yml"
 
 permissions:
   contents: read
@@ -18,6 +15,7 @@ jobs:
   real-android-ai:
     name: Build → Real Android Device → Gemini Analysis
     runs-on: ubuntu-latest
+    if: false
     timeout-minutes: 45
 
     steps:

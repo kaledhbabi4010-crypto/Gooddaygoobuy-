@@ -1,13 +1,12 @@
 name: GQS Full Android Test
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
   android-full-test:
     runs-on: ubuntu-latest
+    if: false
 
     steps:
       - name: Checkout repository

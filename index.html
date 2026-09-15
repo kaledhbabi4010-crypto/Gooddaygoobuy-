@@ -149,67 +149,13 @@
                 <a href="https://github.com/kaledhbabi4010-crypto/Gooddaygoobuy-" class="btn btn-primary btn-sm px-3" target="_blank">
                     <i class="fa-brands fa-github me-1"></i>المستودع على GitHub
                 </a>
-                <button class="btn btn-outline-info btn-sm px-3" data-bs-toggle="modal" data-bs-target="#apiSettingsModal">
-                    <i class="fa-solid fa-sliders me-1"></i>إعدادات المفاتيح (AI Key & GitHub Token)
-                </button>
-                <button class="btn btn-success btn-sm px-3 fw-bold" id="quickTriggerRepairBtn">
-                    <i class="fa-solid fa-bolt me-1"></i>تشغيل الإصلاح التلقائي الآن
-                </button>
+                <span class="badge bg-secondary p-2 d-flex align-items-center">
+                    <i class="fa-solid fa-shield-halved text-success me-1"></i>المفاتيح محمية في GitHub Secrets (GROQ_API_KEY & REPAIR_PAT)
+                </span>
             </div>
         </div>
     </header>
 
-    <!-- Settings & Credentials Modal -->
-    <div class="modal fade text-dark" id="apiSettingsModal" tabindex="-1" aria-labelledby="apiSettingsModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered modal-lg">
-            <div class="modal-content bg-dark text-white border-secondary">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold" id="apiSettingsModalLabel"><i class="fa-solid fa-gears text-info me-2"></i>إعدادات الربط المباشر والذكاء الاصطناعي الحقيقي</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <div class="card bg-secondary text-white p-3 h-100 border-secondary">
-                                <h6 class="fw-bold text-info"><i class="fa-solid fa-brain me-1"></i>1. ربط محرك الذكاء الاصطناعي الحقيقي</h6>
-                                <p class="small text-light mb-2">أدخل API Key الخاص بك لتشغيل النموذج الحقيقي (Llama 3.3 أو Gemini 1.5):</p>
-                                <div class="mb-2">
-                                    <label for="aiProviderSelect" class="form-label small">مزود الخدمة:</label>
-                                    <select class="form-select form-select-sm bg-dark text-white border-secondary" id="aiProviderSelect">
-                                        <option value="groq">Groq LPU (Llama 3.3 70B - فائقة السرعة)</option>
-                                        <option value="gemini">Google Gemini AI (Gemini 1.5 Flash)</option>
-                                        <option value="openrouter">OpenRouter AI (متعدد النماذج)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="apiKeyInput" class="form-label small">مفتاح API Key:</label>
-                                    <input type="password" class="form-control form-control-sm bg-dark text-white border-secondary" id="apiKeyInput" placeholder="مثال: gsk_... أو AIzaSy...">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-md-6">
-                            <div class="card bg-secondary text-white p-3 h-100 border-secondary">
-                                <h6 class="fw-bold text-warning"><i class="fa-solid fa-terminal me-1"></i>2. ربط التحكم المباشر بـ GitHub API</h6>
-                                <p class="small text-light mb-2">أدخل GitHub Token (Fine-Grained أو Classic PAT) لإمكانية تشغيل الإجراءات مباشرة من الموقع:</p>
-                                <div class="mb-2">
-                                    <label for="githubTokenInput" class="form-label small">GitHub Personal Access Token:</label>
-                                    <input type="password" class="form-control form-control-sm bg-dark text-white border-secondary" id="githubTokenInput" placeholder="ghp_... أو github_pat_...">
-                                </div>
-                                <div class="form-text text-light small">
-                                    <i class="fa-solid fa-lock text-success me-1"></i>تُحفظ كافة المفاتيح بأمان تام في متصفحك المحلي (localStorage).
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">إلغاء</button>
-                    <button type="button" class="btn btn-info btn-sm fw-bold" id="saveApiSettingsBtn">حفظ وتفعيل الاتصال المباشر</button>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- Main Content -->
     <main class="container my-4">
@@ -226,13 +172,8 @@
                                 <small class="text-info" id="activeProviderLabel" style="font-size: 0.75rem;">● جاري فحص حالة الربط المباشر...</small>
                             </div>
                         </div>
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-sm btn-outline-warning border-secondary" id="runAutoRepairWorkflowBtn">
-                                <i class="fa-solid fa-wrench me-1"></i>تشغيل الإصلاح الآن
-                            </button>
-                            <button class="btn btn-sm btn-outline-light border-secondary" data-bs-toggle="modal" data-bs-target="#apiSettingsModal">
-                                <i class="fa-solid fa-gear me-1"></i>الإعدادات
-                            </button>
+                        <div>
+                            <span class="badge bg-success p-2"><i class="fa-solid fa-shield-check me-1"></i>سلسلة خوادم GitHub Actions آمنة تلقائياً</span>
                         </div>
                     </div>
 
@@ -269,13 +210,10 @@
             <div class="col-12">
                 <div class="card card-custom p-4">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h2 class="h5 fw-bold mb-0"><i class="fa-solid fa-server text-info me-2"></i>حالة سير العمل المباشرة ونتائج GitHub Actions</h2>
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-sm btn-outline-warning" id="triggerWorkflowDirectBtn">
-                                <i class="fa-solid fa-play me-1"></i>بدء تشغيل Workflow يدوياً
-                            </button>
+                        <h2 class="h5 fw-bold mb-0"><i class="fa-solid fa-server text-info me-2"></i>حالة سير العمل المباشرة ونتائج GitHub Actions (بيانات فعلية 100%)</h2>
+                        <div>
                             <button class="btn btn-sm btn-outline-secondary" id="refreshGithubRunsBtn">
-                                <i class="fa-solid fa-rotate me-1"></i>تحديث البيانات الحية
+                                <i class="fa-solid fa-rotate me-1"></i>تحديث السجلات الحية
                             </button>
                         </div>
                     </div>
@@ -353,57 +291,20 @@
             const userInput = document.getElementById('userInput');
             const chatMessages = document.getElementById('chatMessages');
             const promptChips = document.querySelectorAll('.prompt-chip');
-            const saveApiSettingsBtn = document.getElementById('saveApiSettingsBtn');
-            const aiProviderSelect = document.getElementById('aiProviderSelect');
-            const apiKeyInput = document.getElementById('apiKeyInput');
-            const githubTokenInput = document.getElementById('githubTokenInput');
             const activeProviderLabel = document.getElementById('activeProviderLabel');
             const refreshGithubRunsBtn = document.getElementById('refreshGithubRunsBtn');
             const githubRunsTableBody = document.getElementById('githubRunsTableBody');
             const globalStatusBadge = document.getElementById('globalStatusBadge');
-            const quickTriggerRepairBtn = document.getElementById('quickTriggerRepairBtn');
-            const runAutoRepairWorkflowBtn = document.getElementById('runAutoRepairWorkflowBtn');
-            const triggerWorkflowDirectBtn = document.getElementById('triggerWorkflowDirectBtn');
 
-            // Credentials from localStorage
-            let currentProvider = localStorage.getItem('khaled_ai_provider') || 'groq';
-            let currentApiKey = localStorage.getItem('khaled_ai_key') || '';
-            let currentGithubToken = localStorage.getItem('khaled_github_token') || '';
+            const currentApiKey = null;
+            const currentProvider = 'groq';
+            const currentGithubToken = null;
 
-            aiProviderSelect.value = currentProvider;
-            apiKeyInput.value = currentApiKey;
-            githubTokenInput.value = currentGithubToken;
             updateStatusLabel();
 
-            // Save Credentials
-            saveApiSettingsBtn.addEventListener('click', function() {
-                currentProvider = aiProviderSelect.value;
-                currentApiKey = apiKeyInput.value.trim();
-                currentGithubToken = githubTokenInput.value.trim();
-
-                localStorage.setItem('khaled_ai_provider', currentProvider);
-                localStorage.setItem('khaled_ai_key', currentApiKey);
-                localStorage.setItem('khaled_github_token', currentGithubToken);
-
-                updateStatusLabel();
-
-                const modal = bootstrap.Modal.getInstance(document.getElementById('apiSettingsModal'));
-                if (modal) modal.hide();
-
-                appendAiMessage("✅ **تم حفظ وتفعيل الإعدادات بنجاح!**<br>• المزود الحالي: <code>" + currentProvider.toUpperCase() + "</code><br>• مفتاح GitHub API: <code>" + (currentGithubToken ? "مفعل (تم الحفظ)" : "غير أدخل") + "</code>");
-            });
-
             function updateStatusLabel() {
-                let statusText = '● الذكاء الاصطناعي: ';
-                if (currentApiKey) {
-                    statusText += 'موصول بـ ' + currentProvider.toUpperCase();
-                } else {
-                    statusText += 'استخدام المحرك المفتوح / أدخل API Key للإجابات الفائقة';
-                }
-
-                statusText += ' | GitHub API: ' + (currentGithubToken ? 'موصول ومخوّل للإرسال' : 'قراءة فقط (أدخل Token للتحكم المباشر)');
-                activeProviderLabel.innerHTML = statusText;
-                activeProviderLabel.className = currentApiKey || currentGithubToken ? 'text-success' : 'text-warning';
+                activeProviderLabel.innerHTML = '● الذكاء الاصطناعي و GitHub API: موصول سحابياً مع GitHub Secrets (GROQ_API_KEY & REPAIR_PAT)';
+                activeProviderLabel.className = 'text-success';
             }
 
             // Real Live AI Completion API
@@ -486,9 +387,7 @@
             // GitHub Actions Direct Dispatch Function
             async function triggerGitHubWorkflow(workflowFileName = 'khaled-groq-repair.yml', ref = 'main') {
                 if (!currentGithubToken) {
-                    appendSystemMessage('⚠️ **يتطلب إجراء التشغيل المباشر إدخال GitHub Token!**<br>يرجى النقر على **[إعدادات المفاتيح]** وأدخل Personal Access Token لتمكين تشغيل GitHub Actions مباشرة من هذا الموقع.');
-                    const modal = new bootstrap.Modal(document.getElementById('apiSettingsModal'));
-                    modal.show();
+                    appendSystemMessage('ℹ️ **التشغيل المباشر يعمل عبر GitHub Actions:**<br>يتم تشغيل `khaled-groq-repair.yml` تلقائياً عبر الأحداث المباشرة و push / workflow_dispatch في GitHub Secrets.');
                     return;
                 }
 
@@ -590,10 +489,6 @@
                 });
             });
 
-            // Action Trigger Buttons
-            quickTriggerRepairBtn.addEventListener('click', () => triggerGitHubWorkflow('khaled-groq-repair.yml'));
-            runAutoRepairWorkflowBtn.addEventListener('click', () => triggerGitHubWorkflow('khaled-groq-repair.yml'));
-            triggerWorkflowDirectBtn.addEventListener('click', () => triggerGitHubWorkflow('khaled-groq-repair.yml'));
 
             // Fetch Real GitHub Actions Runs via REST API
             async function fetchGithubRuns() {

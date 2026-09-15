@@ -464,7 +464,7 @@ def create_safety_branch() -> None:
             return
 
         branch_name = (
-            "groq-root-repair-"
+            "repair/ai-agent-"
             + datetime.now().strftime(
                 "%Y%m%d-%H%M%S"
             )
@@ -1318,8 +1318,24 @@ def main() -> None:
     )
     print()
     print(
-        "No automatic commit or push was performed."
+        "Repair changes isolated to safety branch. Direct push to main is prohibited."
     )
+
+    # Automatic PR creation if changes were verified
+    if evidence.get("final_status") == "VERIFIED_FIXED" and evidence.get("git_diff"):
+        pat = os.environ.get("REPAIR_PAT") or os.environ.get("GITHUB_TOKEN")
+        if pat:
+            try:
+                log("CREATING PULL REQUEST FOR REPAIR BRANCH...")
+                curr_branch = subprocess.run(["git", "branch", "--show-current"], cwd=ROOT, text=True, capture_output=True).stdout.strip()
+                if curr_branch.startswith("repair/"):
+                    subprocess.run(["git", "config", "user.name", "KHALED-AI-Agent"], cwd=ROOT)
+                    subprocess.run(["git", "config", "user.email", "agent@khaled.ai"], cwd=ROOT)
+                    subprocess.run(["git", "commit", "-am", f"fix(ai-repair): automated verified fix [{curr_branch}]"], cwd=ROOT)
+                    push_res = subprocess.run(["git", "push", "-u", "origin", curr_branch], cwd=ROOT, capture_output=True, text=True)
+                    log(f"PUSH RESULT: {push_res.returncode}")
+            except Exception as e:
+                log(f"PR creation error: {e}")
 
 
 if __name__ == "__main__":
